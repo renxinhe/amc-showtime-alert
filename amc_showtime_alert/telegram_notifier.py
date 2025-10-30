@@ -122,9 +122,10 @@ class TelegramNotifier:
 
         # Create summary header
         total_events = len(events)
+        now = datetime.now().astimezone()
         message = (
             f"🎬 *AMC Q&A Events Summary*\n"
-            f"*{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n"
+            f"*{now.strftime('%Y-%m-%d %H:%M:%S %Z')}*\n"
             f"_{total_events} Q&A events found_\n\n"
         )
 
