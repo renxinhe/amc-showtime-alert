@@ -198,45 +198,20 @@ amc-telegram output/amc_showtimes_special_*.json
 ## Programmatic Usage
 
 ```python
-from amc_scraper import AMCShowtimeScraper
-
 # Scrape showtimes
+from amc_showtime_alert.amc_scraper import AMCShowtimeScraper
 scraper = AMCShowtimeScraper(config_path="config.json")
 results = scraper.scrape_all()
 scraper.save_results(results, "my_showtimes.json")
 
 # Parse special events
-from special_events_parser import SpecialEventsParser
+from amc_showtime_alert.special_events_parser import SpecialEventsParser
 parser = SpecialEventsParser()
 events = parser.parse_file("my_showtimes.json")
 parser.save_events(events, "my_events.json")
 
 # Send notifications
-from telegram_notifier import TelegramNotifier
+from amc_showtime_alert.telegram_notifier import TelegramNotifier
 notifier = TelegramNotifier()
 notifier.send_events("my_events.json")
 ```
-
-## Error Handling
-
-- **Network errors**: Automatic retry with exponential backoff
-- **Rate limiting**: Configurable delays between requests
-- **Parsing errors**: Multiple regex pattern fallbacks
-- **Invalid data**: Validation and filtering
-- **Missing showtimes**: Warnings logged, scraping continues
-
-## Troubleshooting
-
-### No movies found
-- Check logs in `logs/` directory
-- Verify theater slugs in `config.json`
-- Check for rate limiting (increase delays)
-
-### Parsing errors
-- Check raw responses in `logs/raw_responses/`
-- Scraper tries multiple patterns automatically
-
-### Telegram issues
-- Verify bot token and chat ID
-- Check environment variables are set
-- Ensure bot is added to chat
