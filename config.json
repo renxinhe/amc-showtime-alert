@@ -21,7 +21,9 @@
     "delay_between_requests": 1.5,
     "max_retries": 3,
     "retry_delays": [2, 4, 8],
-    "request_timeout": 30
+    "request_timeout": 30,
+    "use_parallel": true,
+    "max_workers": 5
   },
   "output": {
     "save_raw_responses": true,
@@ -36,7 +38,6 @@
   },
   "logging": {
     "console_level": "INFO",
-    "file_level": "DEBUG",
-    "save_failed_requests": true
+    "file_level": "DEBUG"
   }
 }

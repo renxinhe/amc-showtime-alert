@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 
 @dataclass
@@ -78,7 +80,9 @@ class AMCShowtimeScraper:
         self.base_url = "https://www.amctheatres.com"
         self.graph_url = "https://graph.amctheatres.com/v1/graphql"
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " "AppleWebKit/537.36"
+            ),
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Referer": "https://www.amctheatres.com/",
@@ -90,11 +94,20 @@ class AMCShowtimeScraper:
             "total_movies_found": 0,
             "parsing_errors": 0,
         }
+        # Thread-safe lock for statistics updates
+        self._stats_lock = threading.Lock()
 
         # Create output directories
         self._create_directories()
 
         self.logger.info("AMC Scraper initialized successfully")
+
+    def _update_stats(self, **kwargs):
+        """Thread-safe method to update statistics"""
+        with self._stats_lock:
+            for key, value in kwargs.items():
+                if key in self.stats:
+                    self.stats[key] += value
 
     def _load_config(self, config_path: str) -> Dict:
         """Load configuration from JSON file"""
@@ -128,13 +141,15 @@ class AMCShowtimeScraper:
         # File handler
         log_dir = Path(self.config["output"]["logs_dir"])
         log_dir.mkdir(exist_ok=True)
-        log_file = log_dir / f"scraper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = log_dir / f"scraper_{timestamp}.log"
 
         file_handler = logging.FileHandler(log_file)
         file_level = getattr(logging, self.config["logging"]["file_level"])
         file_handler.setLevel(file_level)
         file_format = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
+            "%(asctime)s - %(name)s - %(levelname)s - "
+            "%(funcName)s:%(lineno)d - %(message)s"
         )
         file_handler.setFormatter(file_format)
         self.logger.addHandler(file_handler)
@@ -174,12 +189,12 @@ class AMCShowtimeScraper:
                 self.logger.debug(
                     f"Fetching {url} (attempt {attempt + 1}/{max_retries})"
                 )
-                self.stats["total_requests"] += 1
+                self._update_stats(total_requests=1)
 
                 response = requests.get(url, headers=self.headers, timeout=timeout)
                 response.raise_for_status()
 
-                self.stats["successful_requests"] += 1
+                self._update_stats(successful_requests=1)
                 self.logger.debug(f"Successfully fetched data for {date}")
 
                 # Save raw response if configured
@@ -205,7 +220,7 @@ class AMCShowtimeScraper:
                 time.sleep(delay)
 
         # All retries failed
-        self.stats["failed_requests"] += 1
+        self._update_stats(failed_requests=1)
         self.logger.error(
             f"Failed to fetch data for {date} after {max_retries} attempts"
         )
@@ -337,7 +352,7 @@ class AMCShowtimeScraper:
 
         except Exception as e:
             self.logger.error(f"Error parsing HTML: {e}", exc_info=True)
-            self.stats["parsing_errors"] += 1
+            self._update_stats(parsing_errors=1)
 
         self.logger.info(f"Parsed {len(movies)} movies with showtimes")
         return movies
@@ -451,7 +466,7 @@ class AMCShowtimeScraper:
 
                 if self._validate_movie(movie):
                     movies.append(movie)
-                    self.stats["total_movies_found"] += 1
+                    self._update_stats(total_movies_found=1)
                 else:
                     self.logger.debug(f"Skipping invalid movie: {name}")
 
@@ -520,6 +535,90 @@ class AMCShowtimeScraper:
 
         elapsed = time.time() - start_time
         self.logger.info(f"Scraping completed in {elapsed:.1f}s")
+
+        # Print stats
+        self._print_stats(all_results)
+
+        return all_results
+
+    def scrape_all_parallel(
+        self, max_workers: Optional[int] = None
+    ) -> List[DailyShowtimes]:
+        """
+        Scrape showtimes for all configured theaters and dates using parallel processing
+
+        Args:
+            max_workers: Maximum number of worker threads (default: from config or auto)
+
+        Returns:
+            List of DailyShowtimes objects
+        """
+        all_results = []
+        theaters = self.config["theaters"]
+        days_ahead = self.config["scraping"]["days_ahead"]
+
+        # Get concurrency settings from config
+        if max_workers is None:
+            max_workers = self.config.get("scraping", {}).get("max_workers", None)
+
+        # Generate all theater-date combinations
+        dates = [
+            (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d")
+            for i in range(days_ahead)
+        ]
+
+        # Create list of all tasks
+        tasks = []
+        for theater in theaters:
+            for date in dates:
+                tasks.append((date, theater))
+
+        self.logger.info(
+            f"Starting parallel scrape: {len(theaters)} theaters × "
+            f"{len(dates)} days = {len(tasks)} requests"
+        )
+        if max_workers:
+            self.logger.info(f"Using {max_workers} worker threads")
+        else:
+            self.logger.info("Using auto-detected number of worker threads")
+
+        start_time = time.time()
+
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all tasks
+            future_to_task = {
+                executor.submit(self.scrape_date, date, theater): (date, theater)
+                for date, theater in tasks
+            }
+
+            # Collect results as they complete
+            for future in as_completed(future_to_task):
+                date, theater = future_to_task[future]
+                try:
+                    result = future.result()
+                    all_results.append(result)
+                    self.logger.debug(f"Completed {theater['name']} for {date}")
+                except Exception as e:
+                    self.logger.error(
+                        f"Error processing {theater['name']} for {date}: {e}"
+                    )
+                    # Create error result
+                    error_result = DailyShowtimes(
+                        date=date,
+                        theater=theater["name"],
+                        movies=[],
+                        fetch_time=datetime.now().isoformat(),
+                        success=False,
+                        error_message=f"Execution error: {str(e)}",
+                    )
+                    all_results.append(error_result)
+
+        # Sort results to maintain consistent order (theater, then date)
+        all_results.sort(key=lambda x: (x.theater, x.date))
+
+        elapsed = time.time() - start_time
+        self.logger.info(f"Parallel scraping completed in {elapsed:.1f}s")
 
         # Print stats
         self._print_stats(all_results)
@@ -621,8 +720,15 @@ def main():
         # Create scraper
         scraper = AMCShowtimeScraper(config_path="config.json")
 
-        # Scrape all showtimes
-        results = scraper.scrape_all()
+        # Check if parallel processing is enabled
+        use_parallel = scraper.config.get("scraping", {}).get("use_parallel", True)
+
+        if use_parallel:
+            scraper.logger.info("Using parallel scraping")
+            results = scraper.scrape_all_parallel()
+        else:
+            scraper.logger.info("Using sequential scraping")
+            results = scraper.scrape_all()
 
         # Save results
         scraper.save_results(results)

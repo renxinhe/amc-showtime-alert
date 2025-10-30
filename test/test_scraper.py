@@ -4,7 +4,7 @@ Quick test script to verify the scraper works before running full scrape.
 Tests scraping a single date from one theater.
 """
 
-from amc_scraper import AMCShowtimeScraper
+from amc_showtime_alert.amc_scraper import AMCShowtimeScraper
 from datetime import datetime, timedelta
 
 
