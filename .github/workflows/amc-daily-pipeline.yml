@@ -36,7 +36,7 @@ jobs:
       id: scraper
       run: |
         echo "🎬 Starting AMC showtime scraping..."
-        python amc_scraper.py
+        python -m amc_showtime_alert.amc_scraper
         
         # Find the latest generated JSON file
         LATEST_JSON=$(ls -t output/amc_showtimes_*.json | head -n1)
@@ -52,7 +52,7 @@ jobs:
       run: |
         echo "🔍 Parsing special events from scraped data..."
         SCRAPED_JSON="${{ steps.scraper.outputs.scraped_json }}"
-        python special_events_parser.py "$SCRAPED_JSON"
+        python -m amc_showtime_alert.special_events_parser "$SCRAPED_JSON"
         
         # Find the latest generated special events JSON file
         LATEST_SPECIAL_JSON=$(ls -t output/amc_showtimes_special_*.json | head -n1)
@@ -67,7 +67,7 @@ jobs:
       run: |
         echo "📱 Sending Telegram notifications..."
         SPECIAL_JSON="${{ steps.parser.outputs.special_events_json }}"
-        python telegram_notifier.py "$SPECIAL_JSON"
+        python -m amc_showtime_alert.telegram_notifier "$SPECIAL_JSON"
         echo "✅ Telegram notifications sent"
         
     - name: Upload Scraped Data Artifact
