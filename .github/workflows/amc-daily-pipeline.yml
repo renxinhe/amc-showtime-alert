@@ -2,10 +2,8 @@ name: AMC Daily Showtime Pipeline
 
 on:
   schedule:
-    # Run every day at 7:00 PM Eastern Time
-    # Using 12 AM UTC (midnight) which is 7 PM EST and 8 PM EDT
-    # This ensures it runs at 7 PM EST in winter and 8 PM EDT in summer
-    - cron: '0 0 * * *'
+    # Using 4 AM UTC (which is 11 PM EST and 12 AM EDT)
+    - cron: '0 4 * * *'
   workflow_dispatch: # Allow manual triggering
 
 jobs:
