@@ -1,0 +1,43 @@
+.env
+
+# Output files
+output/
+logs/
+
+# Python
+__pycache__/
+.eggs/
+.installed.cfg
+.mypy_cache/
+.Python
+*.egg
+*.egg-info/
+*.py[cod]
+*.so
+*$py.class
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+env/
+ENV/
+lib/
+lib64/
+parts/
+sdist/
+var/
+venv/
+wheels/
+
+# IDEs
+.claude/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

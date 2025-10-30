@@ -1,0 +1,42 @@
+{
+  "theaters": [
+    {
+      "name": "AMC Empire 25",
+      "slug": "amc-empire-25",
+      "market": "new-york-city"
+    },
+    {
+      "name": "AMC Lincoln Square 13",
+      "slug": "amc-lincoln-square-13",
+      "market": "new-york-city"
+    },
+    {
+      "name": "AMC 34th Street 14",
+      "slug": "amc-34th-street-14",
+      "market": "new-york-city"
+    }
+  ],
+  "scraping": {
+    "days_ahead": 21,
+    "delay_between_requests": 1.5,
+    "max_retries": 3,
+    "retry_delays": [2, 4, 8],
+    "request_timeout": 30
+  },
+  "output": {
+    "save_raw_responses": true,
+    "save_to_json": true,
+    "output_dir": "output",
+    "logs_dir": "logs"
+  },
+  "validation": {
+    "min_movies_per_day": 1,
+    "warn_if_no_showtimes": true,
+    "validate_time_format": true
+  },
+  "logging": {
+    "console_level": "INFO",
+    "file_level": "DEBUG",
+    "save_failed_requests": true
+  }
+}
