@@ -21,7 +21,8 @@ Input:
     - Must contain 'results' array with theater and movie data
 
 Output:
-    - Creates timestamped file: output/amc_showtimes_special_YYYYMMDD_HHMMSS.json
+    - Creates timestamped file:
+      output/amc_showtimes_special_YYYYMMDD_HHMMSS.json
     - Contains all special events found in the input data
     - Includes metadata: parse time, source file, event counts
 
@@ -69,8 +70,24 @@ import json
 import re
 import sys
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Dict, List
+
+
+class EventType(StrEnum):
+    """String enum for special event types"""
+
+    ADVANCE_SCREENING = "Advance Screening"
+    EARLY_ACCESS = "Early Access"
+    FAN_EVENT = "Fan Event"
+    ONE_NIGHT_ONLY = "One Night Only"
+    PANEL_DISCUSSION = "Panel Discussion"
+    PREMIERE_EVENT = "Premiere Event"
+    QA = "Q&A"
+    SNEAK_PEEK = "Sneak Peek"
+    SPECIAL_EVENT = "Special Event"
+    TALKBACK = "Talkback"
 
 
 def find_special_events(json_data: Dict) -> List[Dict]:
@@ -148,7 +165,7 @@ def find_special_events(json_data: Dict) -> List[Dict]:
     return special_events
 
 
-def classify_event_type(matched_pattern: str) -> str:
+def classify_event_type(matched_pattern: str) -> EventType:
     """
     Classify the type of special event based on the matched pattern
 
@@ -156,36 +173,36 @@ def classify_event_type(matched_pattern: str) -> str:
         matched_pattern: The regex pattern that was matched
 
     Returns:
-        Human-readable event type
+        EventType enum value
     """
     pattern_lower = matched_pattern.lower().strip()
 
     if ("live" in pattern_lower and "q" in pattern_lower and "a" in pattern_lower) or (
         "q" in pattern_lower and "a" in pattern_lower
     ):
-        return "Q&A"
+        return EventType.QA
     elif "early access" in pattern_lower:
-        return "Early Access"
+        return EventType.EARLY_ACCESS
     elif "advance" in pattern_lower and "screening" in pattern_lower:
-        return "Advance Screening"
+        return EventType.ADVANCE_SCREENING
     elif "special" in pattern_lower and (
         "screening" in pattern_lower or "event" in pattern_lower
     ):
-        return "Special Event"
+        return EventType.SPECIAL_EVENT
     elif "fan event" in pattern_lower:
-        return "Fan Event"
+        return EventType.FAN_EVENT
     elif "one night only" in pattern_lower:
-        return "One Night Only"
+        return EventType.ONE_NIGHT_ONLY
     elif "sneak peek" in pattern_lower:
-        return "Sneak Peek"
+        return EventType.SNEAK_PEEK
     elif "premiere" in pattern_lower and "event" in pattern_lower:
-        return "Premiere Event"
+        return EventType.PREMIERE_EVENT
     elif "talkback" in pattern_lower:
-        return "Talkback"
+        return EventType.TALKBACK
     elif "panel" in pattern_lower and "discussion" in pattern_lower:
-        return "Panel Discussion"
+        return EventType.PANEL_DISCUSSION
     else:
-        return "Special Event"
+        return EventType.SPECIAL_EVENT
 
 
 def main():
