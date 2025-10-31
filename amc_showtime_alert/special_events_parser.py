@@ -70,24 +70,10 @@ import json
 import re
 import sys
 from datetime import datetime
-from enum import StrEnum
 from pathlib import Path
 from typing import Dict, List
 
-
-class EventType(StrEnum):
-    """String enum for special event types"""
-
-    ADVANCE_SCREENING = "Advance Screening"
-    EARLY_ACCESS = "Early Access"
-    FAN_EVENT = "Fan Event"
-    ONE_NIGHT_ONLY = "One Night Only"
-    PANEL_DISCUSSION = "Panel Discussion"
-    PREMIERE_EVENT = "Premiere Event"
-    QA = "Q&A"
-    SNEAK_PEEK = "Sneak Peek"
-    SPECIAL_EVENT = "Special Event"
-    TALKBACK = "Talkback"
+from .schema import EventType
 
 
 def find_special_events(json_data: Dict) -> List[Dict]:

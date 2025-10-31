@@ -146,7 +146,7 @@ Detects special events (Q&A sessions, early access, special screenings) from scr
 
 ### 3. Telegram Notifier (`telegram_notifier.py`)
 
-Sends formatted notifications to Telegram for special events.
+Sends formatted notifications to Telegram for special events with smart deduplication.
 
 #### Input
 - **JSON file**: `output/amc_showtimes_special_TIMESTAMP.json` (from parser)
@@ -167,22 +167,115 @@ Sends formatted notifications to Telegram for special events.
    export TELEGRAM_CHAT_IDS="your_chat_id1,your_chat_id2"
    ```
 
-#### Message Format
+#### Message Formats
+
+**New Event:**
 ```
-🎬 Special Events Found!
+🎬 New Q&A Event!
 
-📅 2025-10-30 - AMC Empire 25
-🎭 Movie Title (7:30 PM)
-   Q&A with director after screening
+Movie Title
+📍 AMC Empire 25
+📅 2025-10-30
+⏳ 120min [PG-13]
+⏰ 7:30 PM, 9:00 PM
+```
 
-📅 2025-10-31 - AMC Empire 25  
-🎭 Another Movie (8:00 PM)
-   Early Access Screening
+**Updated Event (Showtime Changes):**
+```
+🔔 Updated Q&A Event
+
+🎬 Movie Title
+📍 AMC Empire 25
+📅 2025-10-30
+⏳ 120min [PG-13]
+
+✅ New showtimes:
+  ⏰ 11:00 PM
+
+❌ Removed showtimes:
+  ⏰ 7:30 PM
+
+📌 Still available:
+  ⏰ 9:00 PM
 ```
 
 ---
 
-## Workflow
+### 4. Notification State Manager (`notification_state.py`)
+
+Tracks notification history in SQLite to prevent duplicate alerts and enable frequent polling without spam.
+
+#### Features
+- **Smart Deduplication**: Tracks which events have been notified
+- **Showtime Change Detection**: Re-notifies only when showtimes are added/removed
+- **30-Day Retention**: Automatically cleans up old notification records
+- **SQLite Storage**: Persistent state across pipeline runs
+
+#### Database Schema
+```sql
+CREATE TABLE notifications (
+    notification_id TEXT PRIMARY KEY,
+    theater TEXT,
+    date TEXT,
+    movie_name TEXT,
+    event_type TEXT,
+    showtimes TEXT,  -- JSON array
+    first_notified_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    notification_count INTEGER
+);
+```
+
+#### How It Works
+1. **First time**: Event is new → Send notification and record in database
+2. **Second time**: Same event with same showtimes → Skip notification
+3. **Showtimes change**: Same event but different times → Send update notification
+4. **Past events**: Automatically removed after 30 days
+
+---
+
+### 5. Unified Pipeline (`run_alert_pipeline.py`)
+
+Runs the complete pipeline with deduplication in a single command.
+
+#### Usage
+```bash
+# Run with defaults
+python run_alert_pipeline.py
+
+# Specify custom paths
+python run_alert_pipeline.py --config config.json --db notifications.db
+```
+
+#### What It Does
+1. **Scrapes** showtimes from all configured theaters
+2. **Parses** special events from scraped data
+3. **Checks** notification state for duplicates
+4. **Sends** only new or updated events via Telegram
+5. **Updates** notification state database
+6. **Cleans up** old notification records
+
+#### Benefits
+- Can run every 6 hours without spamming users
+- Detects and notifies about showtime changes
+- Single command for entire workflow
+- Comprehensive logging and statistics
+
+---
+
+## Workflows
+
+### Option 1: Unified Pipeline (Recommended)
+
+Single command with deduplication - safe to run frequently:
+
+```bash
+python run_alert_pipeline.py
+```
+
+### Option 2: Step-by-Step (Manual)
+
+For testing or custom workflows:
 
 ```bash
 # 1. Scrape showtimes
@@ -191,9 +284,16 @@ amc-scraper
 # 2. Find special events
 amc-parser output/amc_showtimes_*.json
 
-# 3. Send notifications
+# 3. Send notifications (legacy - no deduplication)
 amc-telegram output/amc_showtimes_special_*.json
 ```
+
+### GitHub Actions (Automated)
+
+The workflow runs automatically every 6 hours:
+- 4 AM, 10 AM, 4 PM, 10 PM UTC
+- Database state persists between runs
+- No duplicate notifications sent
 
 ## Programmatic Usage
 

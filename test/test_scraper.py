@@ -1,73 +1,68 @@
 #!/usr/bin/env python3
 """
-Quick test script to verify the scraper works before running full scrape.
-Tests scraping a single date from one theater.
+Test suite for AMC Scraper.
+Tests scraping functionality for a single date from one theater.
 """
 
-from amc_showtime_alert.amc_scraper import AMCShowtimeScraper
+import sys
+import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from amc_showtime_alert.amc_scraper import AMCShowtimeScraper
 
 
-def test_single_date():
-    """Test scraping a single date"""
-    print("🧪 Testing AMC Scraper...")
-    print("=" * 60)
+class TestAMCScraper(unittest.TestCase):
+    """Test cases for AMC Scraper"""
 
-    try:
-        # Create scraper
-        scraper = AMCShowtimeScraper(config_path="config.json")
+    def setUp(self):
+        """Set up scraper before each test"""
+        config_path = Path("config.json")
+        if not config_path.exists():
+            self.skipTest("config.json not found")
 
-        # Test with tomorrow's date
-        tomorrow = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-        theater = scraper.config['theaters'][0]  # First theater in config
+        self.scraper = AMCShowtimeScraper(config_path="config.json")
+        self.tomorrow = (datetime.now() + timedelta(days=1)).strftime(
+            '%Y-%m-%d'
+        )
+        self.theater = self.scraper.config['theaters'][0]
 
-        print(f"\n📍 Theater: {theater['name']}")
-        print(f"📅 Date: {tomorrow}")
-        print("\n⏳ Fetching showtimes...\n")
+    def test_scraper_initialization(self):
+        """Test that scraper initializes correctly"""
+        self.assertIsNotNone(self.scraper)
+        self.assertIsNotNone(self.scraper.config)
+        self.assertGreater(len(self.scraper.config['theaters']), 0)
 
-        # Scrape
-        result = scraper.scrape_date(tomorrow, theater)
-
-        # Display results
-        print("=" * 60)
-        print("RESULTS")
-        print("=" * 60)
-
+    def test_single_date_scrape(self):
+        """Test scraping a single date from one theater"""
+        result = self.scraper.scrape_date(self.tomorrow, self.theater)
+        self.assertIsNotNone(result)
         if result.success:
-            print(f"✅ Success! Found {len(result.movies)} movies\n")
-
-            for i, movie in enumerate(result.movies, 1):
-                runtime = f" ({movie.runtime}min)" if movie.runtime else ""
-                rating = f" [{movie.rating}]" if movie.rating else ""
-                print(f"{i}. {movie.name}{runtime}{rating}")
-                print(f"   Showtimes: {', '.join(movie.showtimes)}")
-                print()
-
+            self.assertIsNotNone(result.movies)
+            self.assertIsInstance(result.movies, list)
         else:
-            print(f"❌ Failed: {result.error_message}")
+            self.assertIsNotNone(result.error_message)
 
-        # Show stats
-        print("=" * 60)
-        print("STATISTICS")
-        print("=" * 60)
-        print(f"Total requests: {scraper.stats['total_requests']}")
-        print(f"Successful: {scraper.stats['successful_requests']}")
-        print(f"Failed: {scraper.stats['failed_requests']}")
-        print(f"Movies found: {scraper.stats['total_movies_found']}")
+    def test_scraper_stats_tracking(self):
+        """Test that scraper tracks statistics correctly"""
+        initial_requests = self.scraper.stats['total_requests']
+        self.scraper.scrape_date(self.tomorrow, self.theater)
+        self.assertGreater(
+            self.scraper.stats['total_requests'],
+            initial_requests
+        )
 
-        if result.success:
-            print("\n✅ Test passed! You can now run: python amc_scraper.py")
-        else:
-            print("\n⚠️  Test failed. Check the logs in logs/ directory")
-
-    except FileNotFoundError as e:
-        print(f"\n❌ Error: {e}")
-        print("Make sure config.json exists in the current directory")
-    except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
+    def test_movie_data_structure(self):
+        """Test that scraped movie data has correct structure"""
+        result = self.scraper.scrape_date(self.tomorrow, self.theater)
+        if result.success and len(result.movies) > 0:
+            movie = result.movies[0]
+            self.assertIsNotNone(movie.name)
+            self.assertIsNotNone(movie.showtimes)
+            self.assertIsInstance(movie.showtimes, list)
 
 
 if __name__ == "__main__":
-    test_single_date()
+    unittest.main()

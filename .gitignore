@@ -4,6 +4,9 @@
 output/
 logs/
 
+# Notification state database
+notifications.db
+
 # Python
 __pycache__/
 .eggs/
