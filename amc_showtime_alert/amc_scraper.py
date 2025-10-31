@@ -13,51 +13,12 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
-
-@dataclass
-class Movie:
-    """Represents a movie with its details"""
-
-    name: str
-    slug: str
-    runtime: Optional[int]
-    rating: str
-    showtimes: List[str]
-
-    def is_valid(self) -> bool:
-        """Validate movie data"""
-        return (
-            bool(self.name)
-            and bool(self.slug)
-            and len(self.showtimes) > 0
-            and all(self._is_valid_time(t) for t in self.showtimes)
-        )
-
-    @staticmethod
-    def _is_valid_time(time_str: str) -> bool:
-        """Check if time string is in valid format (e.g., '7:30 PM')"""
-        return bool(re.match(r"^\d{1,2}:\d{2}\s*(AM|PM)$", time_str))
-
-
-@dataclass
-class DailyShowtimes:
-    """Represents showtimes for a specific date at a theater"""
-
-    date: str
-    theater: str
-    movies: List[Movie]
-    fetch_time: str
-    success: bool
-    error_message: Optional[str] = None
-
-    def is_valid(self) -> bool:
-        """Validate daily showtimes data"""
-        return self.success and len(self.movies) > 0
+from .schema import DailyShowtimes, Movie
 
 
 class AMCShowtimeScraper:
