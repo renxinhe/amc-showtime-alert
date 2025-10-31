@@ -58,6 +58,146 @@ class TelegramNotifier:
 
         print("✅ Telegram bot initialized successfully")
 
+    def send_notifications(
+        self,
+        events: list[EventData],
+        chat_ids: list[str],
+    ) -> dict[str, int]:
+        """Send Telegram notifications for Q&A events only"""
+        qa_events = self._filter_qa_events(events)
+
+        if not qa_events:
+            print("📱 No Q&A events to notify about")
+            return {"sent": 0, "failed": 0}
+
+        print(
+            f"📱 Sending notifications for {len(qa_events)} Q&A events "
+            f"to {len(chat_ids)} chat(s)..."
+        )
+
+        # Create comprehensive summary message for Q&A events only
+        summary_message = self._format_all_events_summary(qa_events)
+
+        sent_count = 0
+        failed_count = 0
+
+        # Send one message to each chat
+        for chat_id in chat_ids:
+            if self._send_message(summary_message, chat_id):
+                sent_count += 1
+            else:
+                failed_count += 1
+
+            # Rate limiting - wait between messages
+            time.sleep(RATE_LIMIT_DELAY_SECONDS)
+
+        return {"sent": sent_count, "failed": failed_count}
+
+    def send_notifications_with_deduplication(
+        self,
+        events: list[EventData],
+        chat_ids: list[str],
+        db_path: str = "notifications.db",
+    ) -> dict[str, int]:
+        """
+        Send notifications with smart deduplication using NotificationState
+
+        Args:
+            events: List of all special events
+            chat_ids: List of Telegram chat IDs
+            db_path: Path to notification state database
+
+        Returns:
+            Dictionary with statistics: sent, failed, skipped, updated
+        """
+        # Filter to Q&A events only
+        qa_events = self._filter_qa_events(events)
+
+        if not qa_events:
+            print("📱 No Q&A events to process")
+            return {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
+
+        print(f"🔍 Checking {len(qa_events)} Q&A events for notifications...")
+
+        # Initialize notification state
+        state = NotificationState(db_path)
+
+        # Track statistics
+        stats = {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
+        events_to_notify = []
+
+        # Check each event against notification state
+        for event in qa_events:
+            should_notify, changes = state.should_notify(event)
+
+            if not should_notify:
+                stats["skipped"] += 1
+                print(f"⏭️  Skipping (already notified): {event.movie_name}")
+                continue
+
+            if changes:
+                # This is an update
+                stats["updated"] += 1
+                message = self._format_update_message(event, changes)
+                print(f"🔄 Update detected: {event.movie_name}")
+            else:
+                # This is a new event
+                message = self._format_new_event_message(event)
+                print(f"🆕 New event: {event.movie_name}")
+
+            events_to_notify.append((event, message, changes is not None))
+
+        # If no events to notify, cleanup and return
+        if not events_to_notify:
+            print("📱 No new or updated events to notify about")
+            deleted = state.cleanup_old_entries(days=DEFAULT_RETENTION_DAYS)
+            if deleted > 0:
+                print(f"🧹 Cleaned up {deleted} old notification records")
+            return stats
+
+        print(
+            f"\n📱 Sending {len(events_to_notify)} notifications to {len(chat_ids)} chat(s)..."
+        )
+
+        # Send notifications
+        for event, message, is_update in events_to_notify:
+            success = True
+
+            # Send to all chat IDs
+            for chat_id in chat_ids:
+                if self._send_message(message, chat_id):
+                    # Only count as sent once per event (not per chat)
+                    pass
+                else:
+                    success = False
+                    stats["failed"] += 1
+
+                # Rate limiting
+                time.sleep(RATE_LIMIT_DELAY_SECONDS)
+
+            # Mark as notified if sent successfully to at least one chat
+            if success:
+                state.mark_as_notified(event, is_update=is_update)
+                stats["sent"] += 1
+
+        # Cleanup old entries
+        deleted = state.cleanup_old_entries(days=DEFAULT_RETENTION_DAYS)
+        if deleted > 0:
+            print(f"🧹 Cleaned up {deleted} old notification records")
+
+        # Print statistics
+        db_stats = state.get_statistics()
+        print(f"\n📊 Notification Statistics:")
+        print(f"   🆕 New events sent: {stats['sent'] - stats['updated']}")
+        print(f"   🔄 Updated events sent: {stats['updated']}")
+        print(f"   ⏭️  Events skipped: {stats['skipped']}")
+        print(f"   ❌ Failures: {stats['failed']}")
+        print(f"\n📚 Database Statistics:")
+        print(f"   Total tracked: {db_stats.get('total_records', 0)}")
+        print(f"   Upcoming events: {db_stats.get('upcoming_events', 0)}")
+
+        return stats
+
     def _test_bot_connection(self) -> bool:
         """Test if bot token is valid and bot is accessible"""
         try:
@@ -67,7 +207,7 @@ class TelegramNotifier:
         except Exception:
             return False
 
-    def send_message(
+    def _send_message(
         self,
         message: str,
         chat_id: str,
@@ -128,7 +268,13 @@ class TelegramNotifier:
             text = text.replace(char, f"\\{char}")
         return text
 
-    def format_all_events_summary(self, events: list[EventData]) -> str:
+    def _filter_qa_events(self, events: list[EventData]) -> list[EventData]:
+        """Filter events to only include Q&A type events"""
+        qa_events = [event for event in events if event.event_type == EventType.QA]
+        print(f"🔍 Filtered {len(events)} events to {len(qa_events)} Q&A events")
+        return qa_events
+
+    def _format_all_events_summary(self, events: list[EventData]) -> str:
         """Format all Q&A events into a single comprehensive Telegram message"""
         if not events:
             return "📱 No Q&A events found"
@@ -181,48 +327,7 @@ class TelegramNotifier:
 
         return message.strip()
 
-    def filter_qa_events(self, events: list[EventData]) -> list[EventData]:
-        """Filter events to only include Q&A type events"""
-        qa_events = [event for event in events if event.event_type == EventType.QA]
-        print(f"🔍 Filtered {len(events)} events to {len(qa_events)} Q&A events")
-        return qa_events
-
-    def send_special_events_notifications(
-        self,
-        events: list[EventData],
-        chat_ids: list[str],
-    ) -> dict[str, int]:
-        """Send Telegram notifications for Q&A events only"""
-        qa_events = self.filter_qa_events(events)
-
-        if not qa_events:
-            print("📱 No Q&A events to notify about")
-            return {"sent": 0, "failed": 0}
-
-        print(
-            f"📱 Sending notifications for {len(qa_events)} Q&A events "
-            f"to {len(chat_ids)} chat(s)..."
-        )
-
-        # Create comprehensive summary message for Q&A events only
-        summary_message = self.format_all_events_summary(qa_events)
-
-        sent_count = 0
-        failed_count = 0
-
-        # Send one message to each chat
-        for chat_id in chat_ids:
-            if self.send_message(summary_message, chat_id):
-                sent_count += 1
-            else:
-                failed_count += 1
-
-            # Rate limiting - wait between messages
-            time.sleep(RATE_LIMIT_DELAY_SECONDS)
-
-        return {"sent": sent_count, "failed": failed_count}
-
-    def format_update_message(self, event: EventData, changes: ShowtimeChange) -> str:
+    def _format_update_message(self, event: EventData, changes: ShowtimeChange) -> str:
         """Format an update notification message with showtime changes"""
 
         movie_name = event.movie_name
@@ -235,8 +340,11 @@ class TelegramNotifier:
         runtime_str = f"_{runtime}min_" if runtime else ""
         rating_str = f"[{rating}]" if rating else ""
 
+        now = datetime.now().astimezone()
+
         message = (
-            f"🔔 *Updated Q&A Event*\n\n"
+            f"🔔 *Updated Q&A Event*\n"
+            f"*{now.strftime('%Y-%m-%d %H:%M:%S %Z')}*\n\n"
             f"🎬 *{movie_name}*\n"
             f"📍 {theater}\n"
             f"📅 {date}\n"
@@ -263,7 +371,7 @@ class TelegramNotifier:
 
         return message.strip()
 
-    def format_new_event_message(self, event: EventData) -> str:
+    def _format_new_event_message(self, event: EventData) -> str:
         """Format a new event notification message"""
 
         movie_name = event.movie_name
@@ -277,8 +385,11 @@ class TelegramNotifier:
         runtime_str = f"_{runtime}min_" if runtime else ""
         rating_str = f"[{rating}]" if rating else ""
 
+        now = datetime.now().astimezone()
+
         message = (
-            f"🎬 *New Q&A Event!*\n\n"
+            f"🎬 *New Q&A Event!*\n"
+            f"*{now.strftime('%Y-%m-%d %H:%M:%S %Z')}*\n\n"
             f"*{movie_name}*\n"
             f"📍 {theater}\n"
             f"📅 {date}\n"
@@ -287,111 +398,6 @@ class TelegramNotifier:
         )
 
         return message.strip()
-
-    def send_notifications_with_deduplication(
-        self,
-        events: list[EventData],
-        chat_ids: list[str],
-        db_path: str = "notifications.db",
-    ) -> dict[str, int]:
-        """
-        Send notifications with smart deduplication using NotificationState
-
-        Args:
-            events: List of all special events
-            chat_ids: List of Telegram chat IDs
-            db_path: Path to notification state database
-
-        Returns:
-            Dictionary with statistics: sent, failed, skipped, updated
-        """
-        # Filter to Q&A events only
-        qa_events = self.filter_qa_events(events)
-
-        if not qa_events:
-            print("📱 No Q&A events to process")
-            return {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
-
-        print(f"🔍 Checking {len(qa_events)} Q&A events for notifications...")
-
-        # Initialize notification state
-        state = NotificationState(db_path)
-
-        # Track statistics
-        stats = {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
-        events_to_notify = []
-
-        # Check each event against notification state
-        for event in qa_events:
-            should_notify, changes = state.should_notify(event)
-
-            if not should_notify:
-                stats["skipped"] += 1
-                print(f"⏭️  Skipping (already notified): {event.movie_name}")
-                continue
-
-            if changes:
-                # This is an update
-                stats["updated"] += 1
-                message = self.format_update_message(event, changes)
-                print(f"🔄 Update detected: {event.movie_name}")
-            else:
-                # This is a new event
-                message = self.format_new_event_message(event)
-                print(f"🆕 New event: {event.movie_name}")
-
-            events_to_notify.append((event, message, changes is not None))
-
-        # If no events to notify, cleanup and return
-        if not events_to_notify:
-            print("📱 No new or updated events to notify about")
-            deleted = state.cleanup_old_entries(days=DEFAULT_RETENTION_DAYS)
-            if deleted > 0:
-                print(f"🧹 Cleaned up {deleted} old notification records")
-            return stats
-
-        print(
-            f"\n📱 Sending {len(events_to_notify)} notifications to {len(chat_ids)} chat(s)..."
-        )
-
-        # Send notifications
-        for event, message, is_update in events_to_notify:
-            success = True
-
-            # Send to all chat IDs
-            for chat_id in chat_ids:
-                if self.send_message(message, chat_id):
-                    # Only count as sent once per event (not per chat)
-                    pass
-                else:
-                    success = False
-                    stats["failed"] += 1
-
-                # Rate limiting
-                time.sleep(RATE_LIMIT_DELAY_SECONDS)
-
-            # Mark as notified if sent successfully to at least one chat
-            if success:
-                state.mark_as_notified(event, is_update=is_update)
-                stats["sent"] += 1
-
-        # Cleanup old entries
-        deleted = state.cleanup_old_entries(days=DEFAULT_RETENTION_DAYS)
-        if deleted > 0:
-            print(f"🧹 Cleaned up {deleted} old notification records")
-
-        # Print statistics
-        db_stats = state.get_statistics()
-        print(f"\n📊 Notification Statistics:")
-        print(f"   🆕 New events sent: {stats['sent'] - stats['updated']}")
-        print(f"   🔄 Updated events sent: {stats['updated']}")
-        print(f"   ⏭️  Events skipped: {stats['skipped']}")
-        print(f"   ❌ Failures: {stats['failed']}")
-        print(f"\n📚 Database Statistics:")
-        print(f"   Total tracked: {db_stats.get('total_records', 0)}")
-        print(f"   Upcoming events: {db_stats.get('upcoming_events', 0)}")
-
-        return stats
 
 
 def load_special_events(json_file: str) -> list[EventData]:
@@ -494,7 +500,7 @@ def main() -> None:
 
         # Send notifications
         print("📱 Sending Telegram notifications for Q&A events...")
-        results = notifier.send_special_events_notifications(qa_events, chat_ids)
+        results = notifier.send_notifications(qa_events, chat_ids)
 
         # Print summary
         print("\n📊 Notification Summary:")
