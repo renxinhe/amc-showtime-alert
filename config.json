@@ -31,13 +31,18 @@
     "output_dir": "output",
     "logs_dir": "logs"
   },
-  "validation": {
-    "min_movies_per_day": 1,
-    "warn_if_no_showtimes": true,
-    "validate_time_format": true
-  },
   "logging": {
     "console_level": "INFO",
-    "file_level": "DEBUG"
+    "file_level": "DEBUG",
+    "enable_scraper_file_logging": false,
+    "enable_pipeline_file_logging": false,
+    "enable_status_file_logging": true
+  },
+  "telegram": {
+    "retention_days": 30
+  },
+  "server": {
+    "interval_minutes": 60,
+    "cleanup_interval_days": 7
   }
 }

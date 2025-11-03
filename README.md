@@ -28,25 +28,38 @@ Scrapes movie showtimes from AMC theatres.
   "theaters": [
     {
       "name": "AMC Empire 25",
-      "slug": "amc-empire-25", 
+      "slug": "amc-empire-25",
       "market": "new-york-city"
     }
   ],
   "scraping": {
-    "days_ahead": 14,
+    "days_ahead": 21,
     "delay_between_requests": 1.5,
     "max_retries": 3,
     "retry_delays": [2, 4, 8],
+    "request_timeout": 30,
     "use_parallel": true,
     "max_workers": 5
   },
-  "validation": {
-    "min_movies_per_day": 1,
-    "warn_if_no_showtimes": true
+  "output": {
+    "save_raw_responses": true,
+    "save_to_json": true,
+    "output_dir": "output",
+    "logs_dir": "logs"
   },
   "logging": {
     "console_level": "INFO",
-    "file_level": "DEBUG"
+    "file_level": "DEBUG",
+    "enable_scraper_file_logging": false,
+    "enable_pipeline_file_logging": false,
+    "enable_status_file_logging": true
+  },
+  "telegram": {
+    "retention_days": 30
+  },
+  "server": {
+    "interval_minutes": 60,
+    "cleanup_interval_days": 7
   }
 }
 ```
@@ -146,7 +159,7 @@ Detects special events (Q&A sessions, early access, special screenings) from scr
 
 ### 3. Telegram Notifier (`telegram_notifier.py`)
 
-Sends formatted notifications to Telegram for special events.
+Sends formatted notifications to Telegram for special events with smart deduplication.
 
 #### Input
 - **JSON file**: `output/amc_showtimes_special_TIMESTAMP.json` (from parser)
@@ -167,22 +180,179 @@ Sends formatted notifications to Telegram for special events.
    export TELEGRAM_CHAT_IDS="your_chat_id1,your_chat_id2"
    ```
 
-#### Message Format
+#### Message Formats
+
+**New Event:**
 ```
-🎬 Special Events Found!
+🎬 New Q&A Event!
 
-📅 2025-10-30 - AMC Empire 25
-🎭 Movie Title (7:30 PM)
-   Q&A with director after screening
+Movie Title
+📍 AMC Empire 25
+📅 2025-10-30
+⏳ 120min [PG-13]
+⏰ 7:30 PM, 9:00 PM
+```
 
-📅 2025-10-31 - AMC Empire 25  
-🎭 Another Movie (8:00 PM)
-   Early Access Screening
+**Updated Event (Showtime Changes):**
+```
+🔔 Updated Q&A Event
+
+🎬 Movie Title
+📍 AMC Empire 25
+📅 2025-10-30
+⏳ 120min [PG-13]
+
+✅ New showtimes:
+  ⏰ 11:00 PM
+
+❌ Removed showtimes:
+  ⏰ 7:30 PM
+
+📌 Still available:
+  ⏰ 9:00 PM
 ```
 
 ---
 
-## Workflow
+### 4. Notification State Manager (`notification_state.py`)
+
+Tracks notification history in SQLite to prevent duplicate alerts and enable frequent polling without spam.
+
+#### Features
+- **Smart Deduplication**: Tracks which events have been notified
+- **Showtime Change Detection**: Re-notifies only when showtimes are added/removed
+- **30-Day Retention**: Automatically cleans up old notification records
+- **SQLite Storage**: Persistent state across pipeline runs
+
+#### Database Schema
+```sql
+CREATE TABLE notifications (
+    notification_id TEXT PRIMARY KEY,
+    theater TEXT,
+    date TEXT,
+    movie_name TEXT,
+    event_type TEXT,
+    showtimes TEXT,  -- JSON array
+    first_notified_at TIMESTAMP,
+    last_updated_at TIMESTAMP,
+    notification_count INTEGER
+);
+```
+
+#### How It Works
+1. **First time**: Event is new → Send notification and record in database
+2. **Second time**: Same event with same showtimes → Skip notification
+3. **Showtimes change**: Same event but different times → Send update notification
+4. **Past events**: Automatically removed after configured retention period (default: 30 days)
+
+#### Configuration
+Set `retention_days` in `config.json` under the `telegram` section to control how long notification records are kept.
+
+---
+
+### 5. Unified Pipeline (`run_alert_pipeline.py`)
+
+Runs the complete pipeline with deduplication in a single command or as a long-running server.
+
+#### Usage
+
+**Single Run Mode (Default):**
+```bash
+# Run with defaults
+python run_alert_pipeline.py
+
+# Specify custom paths
+python run_alert_pipeline.py --config config.json --db notifications.db
+```
+
+**Server Mode (Continuous):**
+```bash
+# Run in server mode with scheduled execution
+python run_alert_pipeline.py --server
+
+# With custom config
+python run_alert_pipeline.py --server --config config.json --db notifications.db
+```
+
+#### What It Does
+1. **Scrapes** showtimes from all configured theaters
+2. **Parses** special events from scraped data
+3. **Checks** notification state for duplicates
+4. **Sends** only new or updated events via Telegram
+5. **Updates** notification state database
+6. **Cleans up** old notification records (in server mode)
+
+#### Server Mode Features
+- **Scheduled Execution**: Runs pipeline automatically at configured intervals (default: every 60 minutes)
+- **Weekly Status Logs**: Appends simple status lines to `logs/status_YYYY-WW.log`
+- **Automatic Cleanup**: Removes old output files weekly to save disk space
+- **Graceful Shutdown**: Handles Ctrl+C to stop cleanly after current run
+- **Minimal Logging**: Disables verbose file logs by default, keeping only essential status logs
+- **Persistent State**: SQLite database maintains notification history across runs
+
+#### Status Log Format
+```
+2025-11-02 10:30:15 | SUCCESS |  45.2s | Theaters:3/3 Movies:285 Events:5 Sent:2 Updated:1 Skipped:2 | -
+2025-11-02 11:30:22 | SUCCESS |  42.8s | Theaters:3/3 Movies:287 Events:5 Sent:0 Updated:0 Skipped:5 | -
+2025-11-02 12:30:18 | FAILED  |  12.1s | Theaters:1/3 Movies:0 Events:0 Sent:0 Updated:0 Skipped:0 | Connection timeout
+```
+
+#### Configuration Options
+
+**Logging Control:**
+- `enable_scraper_file_logging`: Detailed scraper logs (default: `false`)
+- `enable_pipeline_file_logging`: Detailed pipeline logs (default: `false`)
+- `enable_status_file_logging`: Weekly status logs (default: `true`)
+
+**Server Settings:**
+- `interval_minutes`: How often to run pipeline in server mode (default: `60`)
+- `cleanup_interval_days`: How often to clean old output files (default: `7`)
+
+**Telegram Settings:**
+- `retention_days`: How long to keep notification history (default: `30`)
+
+#### Benefits
+- Can run continuously without user intervention
+- Detects and notifies about showtime changes
+- Prevents notification spam through smart deduplication
+- Automatic cleanup preserves disk space
+- Simple status logs for monitoring
+- Graceful interrupt handling (Ctrl+C)
+
+---
+
+## Workflows
+
+### Option 1: Server Mode (Recommended for Production)
+
+Long-running server with automatic scheduling - set it and forget it:
+
+```bash
+python run_alert_pipeline.py --server
+```
+
+**Best for:**
+- Running on a VPS or home server
+- Continuous monitoring without manual intervention
+- Automatic disk space management
+- Simple status logging for monitoring
+
+### Option 2: Unified Pipeline (Recommended for Cron Jobs)
+
+Single command with deduplication - safe to run frequently:
+
+```bash
+python run_alert_pipeline.py
+```
+
+**Best for:**
+- Cron jobs or GitHub Actions
+- Systems where you want external scheduling
+- One-off manual runs
+
+### Option 3: Step-by-Step (Manual)
+
+For testing or custom workflows:
 
 ```bash
 # 1. Scrape showtimes
@@ -191,7 +361,7 @@ amc-scraper
 # 2. Find special events
 amc-parser output/amc_showtimes_*.json
 
-# 3. Send notifications
+# 3. Send notifications (legacy - no deduplication)
 amc-telegram output/amc_showtimes_special_*.json
 ```
 

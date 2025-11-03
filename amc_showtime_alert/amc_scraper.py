@@ -13,51 +13,12 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, asdict
+from dataclasses import asdict
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
-
-@dataclass
-class Movie:
-    """Represents a movie with its details"""
-
-    name: str
-    slug: str
-    runtime: Optional[int]
-    rating: str
-    showtimes: List[str]
-
-    def is_valid(self) -> bool:
-        """Validate movie data"""
-        return (
-            bool(self.name)
-            and bool(self.slug)
-            and len(self.showtimes) > 0
-            and all(self._is_valid_time(t) for t in self.showtimes)
-        )
-
-    @staticmethod
-    def _is_valid_time(time_str: str) -> bool:
-        """Check if time string is in valid format (e.g., '7:30 PM')"""
-        return bool(re.match(r"^\d{1,2}:\d{2}\s*(AM|PM)$", time_str))
-
-
-@dataclass
-class DailyShowtimes:
-    """Represents showtimes for a specific date at a theater"""
-
-    date: str
-    theater: str
-    movies: List[Movie]
-    fetch_time: str
-    success: bool
-    error_message: Optional[str] = None
-
-    def is_valid(self) -> bool:
-        """Validate daily showtimes data"""
-        return self.success and len(self.movies) > 0
+from .schema import DailyShowtimes, Movie
 
 
 class AMCShowtimeScraper:
@@ -72,6 +33,11 @@ class AMCShowtimeScraper:
 
     # Known theater names to exclude from movie matches
     THEATER_KEYWORDS = ["AMC", "IMAX", "Dolby", "Prime", "Empire", "Lincoln", "Square"]
+
+    # Validation constants
+    MIN_MOVIES_PER_DAY = 1
+    WARN_IF_NO_SHOWTIMES = True
+    VALIDATE_TIME_FORMAT = True
 
     def __init__(self, config_path: str = "config.json"):
         """Initialize scraper with configuration"""
@@ -138,23 +104,24 @@ class AMCShowtimeScraper:
         console_handler.setFormatter(console_format)
         self.logger.addHandler(console_handler)
 
-        # File handler
-        log_dir = Path(self.config["output"]["logs_dir"])
-        log_dir.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = log_dir / f"scraper_{timestamp}.log"
+        # File handler (optional based on config)
+        if self.config["logging"].get("enable_scraper_file_logging", False):
+            log_dir = Path(self.config["output"]["logs_dir"])
+            log_dir.mkdir(exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = log_dir / f"scraper_{timestamp}.log"
 
-        file_handler = logging.FileHandler(log_file)
-        file_level = getattr(logging, self.config["logging"]["file_level"])
-        file_handler.setLevel(file_level)
-        file_format = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - "
-            "%(funcName)s:%(lineno)d - %(message)s"
-        )
-        file_handler.setFormatter(file_format)
-        self.logger.addHandler(file_handler)
+            file_handler = logging.FileHandler(log_file)
+            file_level = getattr(logging, self.config["logging"]["file_level"])
+            file_handler.setLevel(file_level)
+            file_format = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - "
+                "%(funcName)s:%(lineno)d - %(message)s"
+            )
+            file_handler.setFormatter(file_format)
+            self.logger.addHandler(file_handler)
 
-        self.logger.info(f"Logging to: {log_file}")
+            self.logger.info(f"Scraper logging to: {log_file}")
 
     def _create_directories(self):
         """Create necessary output directories"""
@@ -395,7 +362,7 @@ class AMCShowtimeScraper:
             self.logger.warning(f"Invalid movie data: {movie.name}")
             return False
 
-        if self.config["validation"]["validate_time_format"]:
+        if self.VALIDATE_TIME_FORMAT:
             invalid_times = [t for t in movie.showtimes if not Movie._is_valid_time(t)]
             if invalid_times:
                 self.logger.warning(
@@ -471,12 +438,12 @@ class AMCShowtimeScraper:
                     self.logger.debug(f"Skipping invalid movie: {name}")
 
             # Validate results
-            success = len(movies) >= self.config["validation"]["min_movies_per_day"]
+            success = len(movies) >= self.MIN_MOVIES_PER_DAY
             error_msg = None if success else "Fewer movies than expected"
 
-            if not success and self.config["validation"]["warn_if_no_showtimes"]:
+            if not success and self.WARN_IF_NO_SHOWTIMES:
                 self.logger.warning(
-                    f"Only {len(movies)} movies found for {date} (expected >= {self.config['validation']['min_movies_per_day']})"
+                    f"Only {len(movies)} movies found for {date} (expected >= {self.MIN_MOVIES_PER_DAY})"
                 )
 
             return DailyShowtimes(
