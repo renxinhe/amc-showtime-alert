@@ -22,7 +22,7 @@ rsync -avz --exclude 'output/' --exclude 'logs/' --exclude '*.pyc' \
 
 ### 2. Install Dependencies on Raspberry Pi
 
-SSH into your Raspberry Pi and install the package:
+SSH into your Raspberry Pi and install the package in a virtual environment:
 
 ```bash
 ssh pi@raspberrypi.local
@@ -30,12 +30,18 @@ ssh pi@raspberrypi.local
 # Navigate to the project directory
 cd ~/amc_showtime_alert
 
+# Create virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate
+
 # Install the package and dependencies
-pip3 install -e .
+pip install -e .
 
 # Or install dependencies manually:
-pip3 install requests beautifulsoup4 schedule
+pip install requests beautifulsoup4 schedule
 ```
+
+**Important:** Using a virtual environment is recommended to avoid dependency conflicts with system packages.
 
 ### 3. Set Up Environment Variables
 
@@ -68,14 +74,16 @@ Press Ctrl+C to stop. If it works, proceed to install the service.
 
 ### 5. Install the systemd Service
 
-Run the installation script:
+Run the installation script (with venv activated if using one):
 
 ```bash
 cd ~/amc_showtime_alert
+source venv/bin/activate  # If using venv
 ./install-service.sh
 ```
 
 The script will:
+- Auto-detect your username and Python environment
 - Copy the service file to `/etc/systemd/system/`
 - Update paths to match your installation directory
 - Reload the systemd daemon
@@ -240,14 +248,41 @@ This error means the `User=` setting in the service file doesn't match a valid u
 
 **Solution 1 - Reinstall with the install script (Recommended):**
 
-The install script automatically detects your username. Just run it again:
+The install script automatically detects your username and Python environment. Just run it again:
 
 ```bash
 cd ~/amc_showtime_alert
 ./install-service.sh
 ```
 
-The script will show you the detected username and update the service file accordingly.
+The script will show you the detected username, Python path, and update the service file accordingly.
+
+### Error: "ModuleNotFoundError: No module named 'schedule'" or Missing Dependencies
+
+This error means the service is using system Python instead of your virtual environment.
+
+**Cause:** The service file is using `/usr/bin/python3` instead of your venv's Python.
+
+**Solution 1 - Reinstall with venv active (Recommended):**
+
+Activate your virtual environment and reinstall:
+
+```bash
+cd ~/amc_showtime_alert
+source venv/bin/activate  # Activate your venv
+./install-service.sh
+```
+
+The script will detect your active venv and use the correct Python path.
+
+**Solution 2 - Manual fix:**
+
+If your venv is at `~/amc_showtime_alert/venv`, you can also just run the install script without activating (it will auto-detect):
+
+```bash
+cd ~/amc_showtime_alert
+./install-service.sh  # Will auto-detect venv/bin/python3
+```
 
 **Solution 2 - Manual fix:**
 

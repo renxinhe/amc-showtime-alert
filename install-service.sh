@@ -51,13 +51,27 @@ echo ""
 # Detect current username
 CURRENT_USER="${USER}"
 echo -e "${YELLOW}Detected username:${NC} ${CURRENT_USER}"
+
+# Detect Python interpreter (prefer venv if active)
+if [ -n "$VIRTUAL_ENV" ]; then
+    PYTHON_EXEC="${VIRTUAL_ENV}/bin/python3"
+    echo -e "${YELLOW}Detected virtual environment:${NC} ${VIRTUAL_ENV}"
+elif [ -f "${SCRIPT_DIR}/venv/bin/python3" ]; then
+    PYTHON_EXEC="${SCRIPT_DIR}/venv/bin/python3"
+    echo -e "${YELLOW}Detected venv at:${NC} ${SCRIPT_DIR}/venv"
+else
+    PYTHON_EXEC="/usr/bin/python3"
+    echo -e "${YELLOW}Using system Python:${NC} ${PYTHON_EXEC}"
+    echo -e "${RED}⚠ Warning: No virtual environment detected. Dependencies may not be available.${NC}"
+fi
+echo -e "${YELLOW}Python executable:${NC} ${PYTHON_EXEC}"
 echo ""
 
-# Update the service file paths and username to match current directory and user
+# Update the service file paths, username, and Python to match current environment
 echo -e "${YELLOW}Updating service file...${NC}"
 TEMP_SERVICE="/tmp/alert-pipeline.service"
 sed "s|WorkingDirectory=/home/pi/amc_showtime_alert|WorkingDirectory=${SCRIPT_DIR}|g" "$SERVICE_FILE" | \
-sed "s|ExecStart=/usr/bin/python3 -u /home/pi/amc_showtime_alert/run_alert_pipeline.py|ExecStart=/usr/bin/python3 -u ${SCRIPT_DIR}/run_alert_pipeline.py|g" | \
+sed "s|ExecStart=/usr/bin/python3 -u /home/pi/amc_showtime_alert/run_alert_pipeline.py|ExecStart=${PYTHON_EXEC} -u ${SCRIPT_DIR}/run_alert_pipeline.py|g" | \
 sed "s|User=pi|User=${CURRENT_USER}|g" > "$TEMP_SERVICE"
 
 # Copy service file to systemd directory
