@@ -26,7 +26,7 @@
     "max_workers": 5
   },
   "output": {
-    "save_raw_responses": true,
+    "save_raw_responses": false,
     "save_to_json": true,
     "output_dir": "output",
     "logs_dir": "logs"
