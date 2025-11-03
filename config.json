@@ -17,13 +17,13 @@
     }
   ],
   "scraping": {
-    "days_ahead": 21,
+    "days_ahead": 30,
     "delay_between_requests": 1.5,
     "max_retries": 3,
     "retry_delays": [2, 4, 8],
     "request_timeout": 30,
     "use_parallel": true,
-    "max_workers": 5
+    "max_workers": 6
   },
   "output": {
     "save_raw_responses": false,
