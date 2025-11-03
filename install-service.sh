@@ -48,11 +48,17 @@ echo -e "${GREEN}✓${NC} Service file found: ${SERVICE_FILE}"
 echo -e "${GREEN}✓${NC} Python script found: ${PYTHON_SCRIPT}"
 echo ""
 
-# Update the service file paths to match current directory
-echo -e "${YELLOW}Updating service file paths...${NC}"
+# Detect current username
+CURRENT_USER="${USER}"
+echo -e "${YELLOW}Detected username:${NC} ${CURRENT_USER}"
+echo ""
+
+# Update the service file paths and username to match current directory and user
+echo -e "${YELLOW}Updating service file...${NC}"
 TEMP_SERVICE="/tmp/alert-pipeline.service"
 sed "s|WorkingDirectory=/home/pi/amc_showtime_alert|WorkingDirectory=${SCRIPT_DIR}|g" "$SERVICE_FILE" | \
-sed "s|ExecStart=/usr/bin/python3 -u /home/pi/amc_showtime_alert/run_alert_pipeline.py|ExecStart=/usr/bin/python3 -u ${SCRIPT_DIR}/run_alert_pipeline.py|g" > "$TEMP_SERVICE"
+sed "s|ExecStart=/usr/bin/python3 -u /home/pi/amc_showtime_alert/run_alert_pipeline.py|ExecStart=/usr/bin/python3 -u ${SCRIPT_DIR}/run_alert_pipeline.py|g" | \
+sed "s|User=pi|User=${CURRENT_USER}|g" > "$TEMP_SERVICE"
 
 # Copy service file to systemd directory
 echo -e "${YELLOW}Installing service file...${NC}"

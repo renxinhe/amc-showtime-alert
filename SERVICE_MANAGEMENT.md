@@ -232,6 +232,46 @@ ssh pi@raspberrypi.local "tail -5 ~/amc_showtime_alert/logs/status_*.log"
 
 ## Troubleshooting
 
+### Error: "Failed to determine user credentials" or "Failed at step USER"
+
+This error means the `User=` setting in the service file doesn't match a valid user on your system.
+
+**Cause:** The service file has `User=pi` but your username is different (e.g., `jim`, `ubuntu`, etc.)
+
+**Solution 1 - Reinstall with the install script (Recommended):**
+
+The install script automatically detects your username. Just run it again:
+
+```bash
+cd ~/amc_showtime_alert
+./install-service.sh
+```
+
+The script will show you the detected username and update the service file accordingly.
+
+**Solution 2 - Manual fix:**
+
+1. Check your current username:
+   ```bash
+   whoami
+   ```
+
+2. Edit the service file:
+   ```bash
+   sudo nano /etc/systemd/system/alert-pipeline.service
+   ```
+
+3. Change the `User=` line to match your username:
+   ```ini
+   User=jim  # Replace with your actual username
+   ```
+
+4. Save and reload:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart alert-pipeline.service
+   ```
+
 ### Service Won't Start
 
 1. Check the service status for error messages:
