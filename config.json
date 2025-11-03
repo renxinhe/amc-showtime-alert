@@ -23,7 +23,7 @@
     "retry_delays": [2, 4, 8],
     "request_timeout": 30,
     "use_parallel": true,
-    "max_workers": 8
+    "max_workers": 5
   },
   "output": {
     "save_raw_responses": true,
