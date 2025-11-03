@@ -1,121 +1,96 @@
-name: AMC Showtime Alert Pipeline
+name: AMC Daily Showtime Pipeline
 
 on:
-  schedule:
-    # Run every 6 hours: 4 AM, 10 AM, 4 PM, 10 PM UTC
-    # (11 PM, 5 AM, 11 AM, 5 PM EST / 12 AM, 6 AM, 12 PM, 6 PM EDT)
-    - cron: '0 4,10,16,22 * * *'
   workflow_dispatch: # Allow manual triggering
 
 jobs:
   amc-pipeline:
     runs-on: ubuntu-latest
-
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-
+      
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-
+        
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -e .
-
+        
     - name: Create output directories
       run: |
         mkdir -p output
         mkdir -p logs
         mkdir -p logs/raw_responses
-
-    - name: Download notification database
-      id: download-db
-      continue-on-error: true
-      uses: actions/download-artifact@v4
-      with:
-        name: notification-database
-        path: .
-
-    - name: Check database status
-      run: |
-        if [ -f "notifications.db" ]; then
-          echo "✅ Notification database restored from previous run"
-          echo "📊 Database size: $(du -h notifications.db | cut -f1)"
-        else
-          echo "📝 No previous database found, will create new one"
-        fi
         
-    - name: Run Alert Pipeline (with deduplication)
-      id: pipeline
+    - name: Run AMC Scraper
+      id: scraper
+      run: |
+        echo "🎬 Starting AMC showtime scraping..."
+        python -m amc_showtime_alert.amc_scraper
+        
+        # Find the latest generated JSON file
+        LATEST_JSON=$(ls -t output/amc_showtimes_*.json | head -n1)
+        echo "scraped_json=$LATEST_JSON" >> $GITHUB_OUTPUT
+        echo "📁 Scraped data saved to: $LATEST_JSON"
+        
+        # Extract timestamp from filename for artifact naming
+        TIMESTAMP=$(basename "$LATEST_JSON" | sed 's/amc_showtimes_\(.*\)\.json/\1/')
+        echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
+        
+    - name: Run Special Events Parser
+      id: parser
+      run: |
+        echo "🔍 Parsing special events from scraped data..."
+        SCRAPED_JSON="${{ steps.scraper.outputs.scraped_json }}"
+        python -m amc_showtime_alert.special_events_parser "$SCRAPED_JSON"
+        
+        # Find the latest generated special events JSON file
+        LATEST_SPECIAL_JSON=$(ls -t output/amc_showtimes_special_*.json | head -n1)
+        echo "special_events_json=$LATEST_SPECIAL_JSON" >> $GITHUB_OUTPUT
+        echo "📁 Special events data saved to: $LATEST_SPECIAL_JSON"
+        
+    - name: Send Telegram Notifications
+      id: telegram
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
       run: |
-        echo "🚀 Starting unified alert pipeline..."
-        python run_alert_pipeline.py --config config.json --db notifications.db
-
-        # Find the latest generated files
-        LATEST_JSON=$(ls -t output/amc_showtimes_*.json 2>/dev/null | head -n1 || echo "")
-        LATEST_SPECIAL_JSON=$(ls -t output/amc_showtimes_special_*.json 2>/dev/null | head -n1 || echo "")
-
-        # Set outputs if files exist
-        if [ -n "$LATEST_JSON" ]; then
-          echo "scraped_json=$LATEST_JSON" >> $GITHUB_OUTPUT
-          echo "📁 Scraped data: $LATEST_JSON"
-
-          # Extract timestamp from filename
-          TIMESTAMP=$(basename "$LATEST_JSON" | sed 's/amc_showtimes_\(.*\)\.json/\1/')
-          echo "timestamp=$TIMESTAMP" >> $GITHUB_OUTPUT
-        fi
-
-        if [ -n "$LATEST_SPECIAL_JSON" ]; then
-          echo "special_events_json=$LATEST_SPECIAL_JSON" >> $GITHUB_OUTPUT
-          echo "📁 Special events: $LATEST_SPECIAL_JSON"
-        fi
-
-        echo "✅ Pipeline completed successfully"
-
-    - name: Upload notification database
-      uses: actions/upload-artifact@v4
-      with:
-        name: notification-database
-        path: notifications.db
-        retention-days: 90
-        overwrite: true
-
+        echo "📱 Sending Telegram notifications..."
+        SPECIAL_JSON="${{ steps.parser.outputs.special_events_json }}"
+        python -m amc_showtime_alert.telegram_notifier "$SPECIAL_JSON"
+        echo "✅ Telegram notifications sent"
+        
     - name: Upload Scraped Data Artifact
-      if: steps.pipeline.outputs.scraped_json != ''
       uses: actions/upload-artifact@v4
       with:
-        name: amc-showtimes-${{ steps.pipeline.outputs.timestamp }}
-        path: ${{ steps.pipeline.outputs.scraped_json }}
+        name: amc-showtimes-${{ steps.scraper.outputs.timestamp }}
+        path: ${{ steps.scraper.outputs.scraped_json }}
         retention-days: 30
-
+        
     - name: Upload Special Events Artifact
-      if: steps.pipeline.outputs.special_events_json != ''
       uses: actions/upload-artifact@v4
       with:
-        name: amc-special-events-${{ steps.pipeline.outputs.timestamp }}
-        path: ${{ steps.pipeline.outputs.special_events_json }}
+        name: amc-special-events-${{ steps.scraper.outputs.timestamp }}
+        path: ${{ steps.parser.outputs.special_events_json }}
         retention-days: 30
-
+        
     - name: Upload Logs Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: amc-logs-${{ steps.pipeline.outputs.timestamp }}
+        name: amc-logs-${{ steps.scraper.outputs.timestamp }}
         path: logs/
         retention-days: 7
-
+        
     - name: Pipeline Summary
       run: |
-        echo "🎉 AMC Alert Pipeline Completed Successfully!"
+        echo "🎉 AMC Daily Pipeline Completed Successfully!"
         echo "📊 Summary:"
-        echo "  - Run time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-        echo "  - Scraped data: ${{ steps.pipeline.outputs.scraped_json }}"
-        echo "  - Special events: ${{ steps.pipeline.outputs.special_events_json }}"
-        echo "  - Notifications processed with deduplication"
-        echo "  - Database state persisted for next run"
+        echo "  - Scraped data: ${{ steps.scraper.outputs.scraped_json }}"
+        echo "  - Special events: ${{ steps.parser.outputs.special_events_json }}"
+        echo "  - Notifications sent via Telegram"
         echo "  - Artifacts uploaded for download"
