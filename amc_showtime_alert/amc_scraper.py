@@ -34,6 +34,11 @@ class AMCShowtimeScraper:
     # Known theater names to exclude from movie matches
     THEATER_KEYWORDS = ["AMC", "IMAX", "Dolby", "Prime", "Empire", "Lincoln", "Square"]
 
+    # Validation constants
+    MIN_MOVIES_PER_DAY = 1
+    WARN_IF_NO_SHOWTIMES = True
+    VALIDATE_TIME_FORMAT = True
+
     def __init__(self, config_path: str = "config.json"):
         """Initialize scraper with configuration"""
         self.config = self._load_config(config_path)
@@ -357,7 +362,7 @@ class AMCShowtimeScraper:
             self.logger.warning(f"Invalid movie data: {movie.name}")
             return False
 
-        if self.config["validation"]["validate_time_format"]:
+        if self.VALIDATE_TIME_FORMAT:
             invalid_times = [t for t in movie.showtimes if not Movie._is_valid_time(t)]
             if invalid_times:
                 self.logger.warning(
@@ -433,12 +438,12 @@ class AMCShowtimeScraper:
                     self.logger.debug(f"Skipping invalid movie: {name}")
 
             # Validate results
-            success = len(movies) >= self.config["validation"]["min_movies_per_day"]
+            success = len(movies) >= self.MIN_MOVIES_PER_DAY
             error_msg = None if success else "Fewer movies than expected"
 
-            if not success and self.config["validation"]["warn_if_no_showtimes"]:
+            if not success and self.WARN_IF_NO_SHOWTIMES:
                 self.logger.warning(
-                    f"Only {len(movies)} movies found for {date} (expected >= {self.config['validation']['min_movies_per_day']})"
+                    f"Only {len(movies)} movies found for {date} (expected >= {self.MIN_MOVIES_PER_DAY})"
                 )
 
             return DailyShowtimes(

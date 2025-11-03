@@ -3,12 +3,10 @@
 
 from datetime import datetime
 import json
-import logging
 import os
 import sys
 import time
 from pathlib import Path
-from typing import Tuple
 
 try:
     import requests
@@ -32,17 +30,18 @@ BOT_CONNECTION_TIMEOUT_SECONDS = 10
 SEND_MESSAGE_TIMEOUT_SECONDS = 30
 RATE_LIMIT_DELAY_SECONDS = 0.5
 
-# Retention constants
-DEFAULT_RETENTION_DAYS = 30
-
 
 class TelegramNotifier:
     """Telegram notification service using Telegram Bot API"""
 
-    def __init__(self) -> None:
+    def __init__(self, config_path: str = "config.json") -> None:
         """Initialize Telegram notifier with bot credentials"""
         self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_ids = os.getenv("TELEGRAM_CHAT_IDS")
+
+        # Load config
+        self.config = self._load_config(config_path)
+        self.retention_days = self.config.get("telegram", {}).get("retention_days", 30)
 
         # Validate credentials
         if not all([self.bot_token, self.chat_ids]):
@@ -57,6 +56,18 @@ class TelegramNotifier:
             sys.exit(1)
 
         print("✅ Telegram bot initialized successfully")
+
+    def _load_config(self, config_path: str) -> dict:
+        """Load configuration from JSON file"""
+        try:
+            with open(config_path, "r") as f:
+                return json.load(f)
+        except FileNotFoundError:
+            print(f"⚠️  Warning: Config file not found: {config_path}, using defaults")
+            return {}
+        except json.JSONDecodeError as e:
+            print(f"⚠️  Warning: Invalid JSON in config file: {e}, using defaults")
+            return {}
 
     def send_notifications(
         self,
@@ -150,7 +161,7 @@ class TelegramNotifier:
         # If no events to notify, cleanup and return
         if not events_to_notify:
             print("📱 No new or updated events to notify about")
-            deleted = state.cleanup_old_entries(days=DEFAULT_RETENTION_DAYS)
+            deleted = state.cleanup_old_entries(days=self.retention_days)
             if deleted > 0:
                 print(f"🧹 Cleaned up {deleted} old notification records")
             return stats
@@ -181,7 +192,7 @@ class TelegramNotifier:
                 stats["sent"] += 1
 
         # Cleanup old entries
-        deleted = state.cleanup_old_entries(days=DEFAULT_RETENTION_DAYS)
+        deleted = state.cleanup_old_entries(days=self.retention_days)
         if deleted > 0:
             print(f"🧹 Cleaned up {deleted} old notification records")
 
