@@ -99,23 +99,24 @@ class AMCShowtimeScraper:
         console_handler.setFormatter(console_format)
         self.logger.addHandler(console_handler)
 
-        # File handler
-        log_dir = Path(self.config["output"]["logs_dir"])
-        log_dir.mkdir(exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = log_dir / f"scraper_{timestamp}.log"
+        # File handler (optional based on config)
+        if self.config["logging"].get("enable_scraper_file_logging", False):
+            log_dir = Path(self.config["output"]["logs_dir"])
+            log_dir.mkdir(exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = log_dir / f"scraper_{timestamp}.log"
 
-        file_handler = logging.FileHandler(log_file)
-        file_level = getattr(logging, self.config["logging"]["file_level"])
-        file_handler.setLevel(file_level)
-        file_format = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - "
-            "%(funcName)s:%(lineno)d - %(message)s"
-        )
-        file_handler.setFormatter(file_format)
-        self.logger.addHandler(file_handler)
+            file_handler = logging.FileHandler(log_file)
+            file_level = getattr(logging, self.config["logging"]["file_level"])
+            file_handler.setLevel(file_level)
+            file_format = logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - "
+                "%(funcName)s:%(lineno)d - %(message)s"
+            )
+            file_handler.setFormatter(file_format)
+            self.logger.addHandler(file_handler)
 
-        self.logger.info(f"Logging to: {log_file}")
+            self.logger.info(f"Scraper logging to: {log_file}")
 
     def _create_directories(self):
         """Create necessary output directories"""

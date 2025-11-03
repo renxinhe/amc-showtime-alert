@@ -38,6 +38,13 @@
   },
   "logging": {
     "console_level": "INFO",
-    "file_level": "DEBUG"
+    "file_level": "DEBUG",
+    "enable_scraper_file_logging": false,
+    "enable_pipeline_file_logging": false,
+    "enable_status_file_logging": true
+  },
+  "server": {
+    "interval_minutes": 60,
+    "cleanup_interval_days": 7
   }
 }
