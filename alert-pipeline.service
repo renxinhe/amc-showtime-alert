@@ -1,0 +1,20 @@
+[Unit]
+Description=AMC Showtime Alert Pipeline Server
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/amc_showtime_alert
+ExecStart=/usr/bin/python3 -u /home/pi/amc_showtime_alert/run_alert_pipeline.py --server
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+StandardOutput=journal
+StandardError=journal
+
+# Environment variables (modify as needed)
+Environment="PATH=/home/pi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+[Install]
+WantedBy=multi-user.target
