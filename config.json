@@ -42,7 +42,7 @@
     "retention_days": 30
   },
   "server": {
-    "interval_minutes": 60,
+    "interval_minutes": 20,
     "cleanup_interval_days": 7
   }
 }
