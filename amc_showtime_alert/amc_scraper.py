@@ -238,11 +238,8 @@ class AMCShowtimeScraper:
 
                     movie_name = match.group(1)
 
-                    # Skip theater rentals and other non-movie entries
-                    if (
-                        self._is_theater_name(movie_name)
-                        or "rental" in movie_name.lower()
-                    ):
+                    # Skip theater name entries
+                    if self._is_theater_name(movie_name):
                         continue
 
                     # Extract slug from section ID
