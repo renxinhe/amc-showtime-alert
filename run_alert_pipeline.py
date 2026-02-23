@@ -3,6 +3,22 @@
 Unified AMC Alert Pipeline
 Runs the complete pipeline: Scrape → Parse → Notify (with deduplication)
 Designed to be run frequently without spamming users
+
+Usage:
+    # Single run (scrape, parse, and send notifications once):
+    python run_alert_pipeline.py
+
+    # Server mode (runs continuously on a timer set in config.json):
+    python run_alert_pipeline.py --server
+
+    # Use a custom config file:
+    python run_alert_pipeline.py --config /path/to/config.json
+
+    # Use a custom notification database:
+    python run_alert_pipeline.py --db /path/to/notifications.db
+
+    # Server mode with custom config and database:
+    python run_alert_pipeline.py --server --config /path/to/config.json --db /path/to/notifications.db
 """
 
 import json
