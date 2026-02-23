@@ -343,9 +343,6 @@ class AlertPipeline:
         self.logger.info("=" * LOG_SEPARATOR_WIDTH)
 
         try:
-            # Load environment variables
-            self._load_env_file()
-
             # Get Telegram credentials
             bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -432,6 +429,25 @@ class AlertPipeline:
                         value = value.strip("\"'")
                         os.environ[key] = value
 
+    def _ping_healthchecks(self, suffix: str = "") -> None:
+        """
+        Ping healthchecks.io to signal pipeline status.
+
+        Args:
+            suffix: URL suffix — "" for success, "/start" for run start,
+                    "/fail" for failure
+        """
+        ping_url = os.getenv("HEALTHCHECKS_PING_URL", "").strip()
+        if not ping_url:
+            return
+        try:
+            import urllib.request
+            url = ping_url.rstrip("/") + suffix
+            urllib.request.urlopen(url, timeout=10)
+            self.logger.debug(f"Healthchecks ping sent: {url}")
+        except Exception as e:
+            self.logger.warning(f"Healthchecks ping failed: {e}")
+
     def run(self, write_status_log: bool = False) -> bool:
         """
         Run the complete pipeline
@@ -454,6 +470,10 @@ class AlertPipeline:
         }
         error_msg = "-"
 
+        # Load env early so HEALTHCHECKS_PING_URL and bot token are available
+        self._load_env_file()
+        self._ping_healthchecks("/start")
+
         try:
             # Initialize metrics
             metrics["theaters_total"] = len(self.config.get("theaters", []))
@@ -462,10 +482,11 @@ class AlertPipeline:
             scraped_file = self.run_scraper()
             if not scraped_file:
                 self.logger.error("Pipeline failed at scraping step")
+                error_msg = "Scraping failed"
+                elapsed = (datetime.now() - start_time).total_seconds()
                 if write_status_log:
-                    error_msg = "Scraping failed"
-                    elapsed = (datetime.now() - start_time).total_seconds()
                     self._write_status_log("FAILED", elapsed, metrics, error_msg)
+                self._ping_healthchecks("/fail")
                 return False
 
             # Count successful theaters and movies
@@ -489,10 +510,11 @@ class AlertPipeline:
             parsed_file = self.run_parser(scraped_file)
             if not parsed_file:
                 self.logger.error("Pipeline failed at parsing step")
+                error_msg = "Parsing failed"
+                elapsed = (datetime.now() - start_time).total_seconds()
                 if write_status_log:
-                    error_msg = "Parsing failed"
-                    elapsed = (datetime.now() - start_time).total_seconds()
                     self._write_status_log("FAILED", elapsed, metrics, error_msg)
+                self._ping_healthchecks("/fail")
                 return False
 
             # Count events
@@ -512,9 +534,9 @@ class AlertPipeline:
             # Calculate elapsed time
             elapsed = (datetime.now() - start_time).total_seconds()
 
-            # Write status log if requested
             if write_status_log:
                 self._write_status_log("SUCCESS", elapsed, metrics, error_msg)
+            self._ping_healthchecks()
 
             # Print final summary
             self.logger.info("\n" + "=" * LOG_SEPARATOR_WIDTH)
@@ -534,17 +556,19 @@ class AlertPipeline:
 
         except KeyboardInterrupt:
             self.logger.info("\n\n⚠️  Pipeline interrupted by user")
+            error_msg = "Interrupted by user"
+            elapsed = (datetime.now() - start_time).total_seconds()
             if write_status_log:
-                error_msg = "Interrupted by user"
-                elapsed = (datetime.now() - start_time).total_seconds()
                 self._write_status_log("FAILED", elapsed, metrics, error_msg)
+            self._ping_healthchecks("/fail")
             return False
         except Exception as e:
             self.logger.error(f"❌ Pipeline failed: {e}", exc_info=True)
+            error_msg = str(e)[:50]
+            elapsed = (datetime.now() - start_time).total_seconds()
             if write_status_log:
-                error_msg = str(e)[:50]  # Truncate long errors
-                elapsed = (datetime.now() - start_time).total_seconds()
                 self._write_status_log("FAILED", elapsed, metrics, error_msg)
+            self._ping_healthchecks("/fail")
             return False
 
     def run_server_mode(self):
