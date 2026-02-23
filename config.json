@@ -43,6 +43,7 @@
   },
   "server": {
     "interval_minutes": 20,
-    "cleanup_interval_days": 7
+    "output_retention_days": 7,
+    "logs_retention_days": 90
   }
 }

@@ -38,6 +38,9 @@ PARSED_EVENTS_FILENAME_PATTERN = "amc_showtimes_special_{}.json"
 # Display constants
 LOG_SEPARATOR_WIDTH = 60
 
+# Cleanup runs once per day regardless of other config
+CLEANUP_INTERVAL_DAYS = 1
+
 
 class AlertPipeline:
     """Orchestrates the complete alert pipeline with deduplication"""
@@ -154,35 +157,61 @@ class AlertPipeline:
         with open(status_file, "a", encoding="utf-8") as f:
             f.write(log_line)
 
-    def _cleanup_old_output_files(self):
+    def _cleanup_old_files(self):
         """
-        Clean up old output files based on config threshold
-        Removes files older than cleanup_interval_days
+        Clean up old output JSON files and old status log files based on
+        configured retention periods.
         """
-        try:
-            cleanup_days = self.config["server"].get("cleanup_interval_days", 7)
-            cutoff_time = time.time() - (cleanup_days * 24 * 60 * 60)
+        server_cfg = self.config.get("server", {})
+        output_retention_days = server_cfg.get("output_retention_days", 7)
+        logs_retention_days = server_cfg.get("logs_retention_days", 90)
 
-            # Patterns for output files
-            patterns = [
+        now = time.time()
+
+        # --- Output JSON files ---
+        try:
+            output_cutoff = now - (output_retention_days * 24 * 60 * 60)
+            output_patterns = [
                 str(self.output_dir / "amc_showtimes_*.json"),
                 str(self.output_dir / "amc_showtimes_special_*.json"),
             ]
 
-            deleted_count = 0
-            for pattern in patterns:
+            deleted_output = 0
+            for pattern in output_patterns:
                 for filepath in glob_module.glob(pattern):
-                    file_stat = os.stat(filepath)
-                    if file_stat.st_mtime < cutoff_time:
+                    if os.stat(filepath).st_mtime < output_cutoff:
                         os.remove(filepath)
-                        deleted_count += 1
-                        self.logger.debug(f"Deleted old file: {filepath}")
+                        deleted_output += 1
+                        self.logger.debug(f"Deleted old output file: {filepath}")
 
-            if deleted_count > 0:
-                self.logger.info(f"🧹 Cleaned up {deleted_count} old output files")
-
+            if deleted_output > 0:
+                self.logger.info(
+                    f"🧹 Cleaned up {deleted_output} output files"
+                    f" older than {output_retention_days} days"
+                )
         except Exception as e:
-            self.logger.error(f"Error during cleanup: {e}", exc_info=True)
+            self.logger.error(f"Error during output file cleanup: {e}", exc_info=True)
+
+        # --- Status log files ---
+        try:
+            log_dir = Path(self.config["output"]["logs_dir"])
+            logs_cutoff = now - (logs_retention_days * 24 * 60 * 60)
+            log_pattern = str(log_dir / "status_*.log")
+
+            deleted_logs = 0
+            for filepath in glob_module.glob(log_pattern):
+                if os.stat(filepath).st_mtime < logs_cutoff:
+                    os.remove(filepath)
+                    deleted_logs += 1
+                    self.logger.debug(f"Deleted old log file: {filepath}")
+
+            if deleted_logs > 0:
+                self.logger.info(
+                    f"🧹 Cleaned up {deleted_logs} status log files"
+                    f" older than {logs_retention_days} days"
+                )
+        except Exception as e:
+            self.logger.error(f"Error during log file cleanup: {e}", exc_info=True)
 
     def run_scraper(self) -> Optional[str]:
         """
@@ -493,8 +522,10 @@ class AlertPipeline:
         Run pipeline in server mode with scheduled execution
         Uses schedule library to run pipeline at configured intervals
         """
-        interval_minutes = self.config["server"].get("interval_minutes", 60)
-        cleanup_days = self.config["server"].get("cleanup_interval_days", 7)
+        server_cfg = self.config.get("server", {})
+        interval_minutes = server_cfg.get("interval_minutes", 60)
+        output_retention_days = server_cfg.get("output_retention_days", 7)
+        logs_retention_days = server_cfg.get("logs_retention_days", 90)
 
         # Track server state
         run_count = 0
@@ -519,7 +550,6 @@ class AlertPipeline:
             self.logger.info(f"\n{'=' * LOG_SEPARATOR_WIDTH}")
             self.logger.info(f"🔄 Starting scheduled run #{run_count}")
             self.logger.info(f"{'=' * LOG_SEPARATOR_WIDTH}")
-            # Use config to determine if status logs should be written
             write_status = self.config["logging"].get(
                 "enable_status_file_logging", True
             )
@@ -528,25 +558,33 @@ class AlertPipeline:
         # Define cleanup job
         def cleanup_job():
             self.logger.info("\n🧹 Running scheduled cleanup...")
-            self._cleanup_old_output_files()
+            self._cleanup_old_files()
 
         # Schedule the pipeline job
         schedule.every(interval_minutes).minutes.do(run_job)
 
-        # Schedule cleanup job (runs weekly)
-        schedule.every(cleanup_days).days.do(cleanup_job)
+        # Schedule cleanup job
+        schedule.every(CLEANUP_INTERVAL_DAYS).days.do(cleanup_job)
 
         # Log server startup
         self.logger.info("\n" + "=" * LOG_SEPARATOR_WIDTH)
         self.logger.info("🚀 AMC ALERT PIPELINE - SERVER MODE")
         self.logger.info("=" * LOG_SEPARATOR_WIDTH)
         self.logger.info(f"⏰ Interval: Every {interval_minutes} minutes")
-        self.logger.info(f"🧹 Cleanup: Every {cleanup_days} days")
+        self.logger.info(
+            f"🧹 Cleanup: Daily"
+            f" (output: {output_retention_days}d, logs: {logs_retention_days}d)"
+        )
         self.logger.info(
             f"📊 Status logs: {self.config['output']['logs_dir']}/status_YYYY-WW.log"
         )
         self.logger.info(f"🔌 Press Ctrl+C to stop gracefully")
         self.logger.info("=" * LOG_SEPARATOR_WIDTH)
+
+        # Run cleanup immediately on startup to handle any stale files from
+        # previous runs, then run the pipeline.
+        self.logger.info("\n🧹 Running startup cleanup...")
+        self._cleanup_old_files()
 
         # Run immediately on startup
         self.logger.info("\n🎬 Running initial pipeline execution...")
