@@ -15,9 +15,10 @@ except ImportError:
     print("Install with: pip install requests")
     sys.exit(1)
 
-# Import schema and notification state manager
+# Import schema, notification state manager, and user manager
 from .schema import EventData, EventType, ShowtimeChange
 from .notification_state import NotificationState
+from .user_manager import UserManager
 
 # Telegram API constants
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
@@ -37,16 +38,15 @@ class TelegramNotifier:
     def __init__(self, config_path: str = "config.json") -> None:
         """Initialize Telegram notifier with bot credentials"""
         self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.chat_ids = os.getenv("TELEGRAM_CHAT_IDS")
 
         # Load config
         self.config = self._load_config(config_path)
         self.retention_days = self.config.get("telegram", {}).get("retention_days", 30)
 
         # Validate credentials
-        if not all([self.bot_token, self.chat_ids]):
+        if not self.bot_token:
             print("❌ Error: Missing Telegram credentials")
-            print("Set environment variables: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_IDS")
+            print("Set environment variable: TELEGRAM_BOT_TOKEN")
             sys.exit(1)
 
         # Test bot connection
@@ -495,11 +495,12 @@ def main() -> None:
             print("📱 No special events found to notify about")
             sys.exit(0)
 
-        chat_ids = os.getenv("TELEGRAM_CHAT_IDS", "").split(",")
+        user_mgr = UserManager()
+        chat_ids = [str(cid) for cid in user_mgr.get_active_subscribers()]
         if not chat_ids:
-            print("❌ Error: TELEGRAM_CHAT_IDS not found")
-            print("Please set your chat IDs in the .env file")
-            sys.exit(1)
+            print("📱 No active subscribers found")
+            print("Users can subscribe by sending /start to the bot")
+            sys.exit(0)
 
         qa_events = [event for event in events if event.event_type == EventType.QA]
         if not qa_events:

@@ -40,6 +40,8 @@ sys.path.insert(0, str(Path(__file__).parent / "amc_showtime_alert"))
 from amc_showtime_alert.amc_scraper import AMCShowtimeScraper
 from amc_showtime_alert.special_events_parser import find_special_events
 from amc_showtime_alert.telegram_notifier import TelegramNotifier
+from amc_showtime_alert.telegram_bot import TelegramBot
+from amc_showtime_alert.user_manager import UserManager
 from amc_showtime_alert.schema import EventData, EventType
 
 # Path constants
@@ -97,22 +99,29 @@ class AlertPipeline:
             raise ValueError(f"Invalid JSON in config file: {e}")
 
     def _setup_logging(self):
-        """Setup logging configuration"""
-        self.logger = logging.getLogger("AlertPipeline")
-        self.logger.setLevel(logging.DEBUG)
+        """Setup logging configuration.
 
-        # Remove existing handlers
-        self.logger.handlers = []
+        Handlers are attached to the root logger so that all named loggers
+        (TelegramBot, UserManager, NotificationState, etc.) inherit them via
+        propagation and their output appears in stdout/the log file.
+        """
+        self.logger = logging.getLogger("AlertPipeline")
+
+        # Configure the root logger — all other loggers propagate up to it.
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)
+        root_logger.handlers = []
 
         # Console handler
         console_handler = logging.StreamHandler()
         console_level = getattr(logging, self.config["logging"]["console_level"])
         console_handler.setLevel(console_level)
         console_format = logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
         )
         console_handler.setFormatter(console_format)
-        self.logger.addHandler(console_handler)
+        root_logger.addHandler(console_handler)
 
         # File handler (optional based on config)
         if self.config["logging"].get("enable_pipeline_file_logging", False):
@@ -129,7 +138,7 @@ class AlertPipeline:
                 "%(funcName)s:%(lineno)d - %(message)s"
             )
             file_handler.setFormatter(file_format)
-            self.logger.addHandler(file_handler)
+            root_logger.addHandler(file_handler)
             self.logger.info(f"Pipeline logging to: {log_file}")
 
     def _write_status_log(
@@ -339,16 +348,21 @@ class AlertPipeline:
 
             # Get Telegram credentials
             bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-            chat_ids_str = os.getenv("TELEGRAM_CHAT_IDS")
 
-            if not bot_token or not chat_ids_str:
-                self.logger.error("❌ Missing Telegram credentials")
-                self.logger.error(
-                    "Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_IDS in .env file"
-                )
+            if not bot_token:
+                self.logger.error("❌ Missing TELEGRAM_BOT_TOKEN in .env file")
                 return {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
 
-            chat_ids = [cid.strip() for cid in chat_ids_str.split(",")]
+            # Load active subscribers from database
+            user_mgr = UserManager(self.db_path)
+            chat_ids = [str(cid) for cid in user_mgr.get_active_subscribers()]
+
+            if not chat_ids:
+                self.logger.info(
+                    "📱 No active subscribers — skipping notifications. "
+                    "Users can subscribe by sending /start to the bot."
+                )
+                return {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
 
             # Load parsed events
             with open(parsed_file, "r", encoding="utf-8") as f:
@@ -546,6 +560,7 @@ class AlertPipeline:
         # Track server state
         run_count = 0
         shutdown_requested = False
+        bot: Optional[TelegramBot] = None
 
         def signal_handler(signum, frame):
             """Handle graceful shutdown on SIGINT/SIGTERM"""
@@ -558,6 +573,17 @@ class AlertPipeline:
         # Register signal handlers
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
+
+        # Start the Telegram bot command listener
+        self._load_env_file()
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        if bot_token:
+            bot = TelegramBot(bot_token=bot_token, db_path=self.db_path)
+            bot.start()
+        else:
+            self.logger.warning(
+                "⚠️  TELEGRAM_BOT_TOKEN not set — bot command listener not started"
+            )
 
         # Define scheduled job
         def run_job():
@@ -594,6 +620,9 @@ class AlertPipeline:
         self.logger.info(
             f"📊 Status logs: {self.config['output']['logs_dir']}/status_YYYY-WW.log"
         )
+        self.logger.info(
+            f"🤖 Bot listener: {'running' if bot else 'not started (missing token)'}"
+        )
         self.logger.info(f"🔌 Press Ctrl+C to stop gracefully")
         self.logger.info("=" * LOG_SEPARATOR_WIDTH)
 
@@ -621,6 +650,9 @@ class AlertPipeline:
                     pass
 
         # Shutdown
+        if bot:
+            bot.stop()
+
         self.logger.info("\n" + "=" * LOG_SEPARATOR_WIDTH)
         self.logger.info("👋 Server shutting down gracefully")
         self.logger.info(f"📊 Total runs completed: {run_count}")
