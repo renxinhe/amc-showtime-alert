@@ -472,6 +472,7 @@ class AlertPipeline:
 
         # Load env early so HEALTHCHECKS_PING_URL and bot token are available
         self._load_env_file()
+        self._ping_healthchecks("/start")
 
         try:
             # Initialize metrics
@@ -653,9 +654,6 @@ class AlertPipeline:
         # previous runs, then run the pipeline.
         self.logger.info("\n🧹 Running startup cleanup...")
         self._cleanup_old_files()
-
-        # Signal service start to healthchecks.io
-        self._ping_healthchecks("/start")
 
         # Run immediately on startup
         self.logger.info("\n🎬 Running initial pipeline execution...")
