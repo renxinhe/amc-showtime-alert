@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from amc_showtime_alert.schema import EventData, EventType
 from amc_showtime_alert.notification_state import NotificationState
-from amc_showtime_alert.telegram_notifier import TelegramNotifier
+from amc_showtime_alert.telegram import TelegramNotifier
 
 
 class TestDeduplicationLogic(unittest.TestCase):

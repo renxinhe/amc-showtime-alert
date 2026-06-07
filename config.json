@@ -17,7 +17,7 @@
     }
   ],
   "scraping": {
-    "days_ahead": 30,
+    "days_ahead": 60,
     "delay_between_requests": 1.5,
     "max_retries": 3,
     "retry_delays": [2, 4, 8],

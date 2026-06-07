@@ -217,5 +217,121 @@ class TestUserNotificationState(unittest.TestCase):
         self.assertTrue(self.state.should_notify(other_alert)[0])
 
 
+class TestGuidedAddAlertFlow(unittest.TestCase):
+    """The button-driven /addalert flow: title -> theaters -> formats -> fan-out."""
+
+    THEATERS = [
+        {"name": "AMC Empire 25", "slug": "amc-empire-25"},
+        {"name": "AMC Lincoln Square 13", "slug": "amc-lincoln-square-13"},
+    ]
+
+    def setUp(self):
+        import logging
+        from types import SimpleNamespace
+        from amc_showtime_alert.telegram import TelegramBot
+
+        self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        self.db = self.tmp.name
+        UserManager(self.db).subscribe(999, first_name="Jim")
+
+        b = TelegramBot.__new__(TelegramBot)
+        b.db_path = self.db
+        b.logger = logging.getLogger("test")
+        b._conversations = {}
+        b.theaters = self.THEATERS
+        b._slugs = {t["slug"] for t in self.THEATERS}
+        b._name_by_slug = {t["slug"]: t["name"] for t in self.THEATERS}
+        # Stub the Telegram API client so no network I/O happens.
+        b._api = SimpleNamespace(
+            send_message=lambda *a, **k: True,
+            send_picker=lambda *a, **k: 101,
+            edit_message=lambda *a, **k: None,
+            edit_markup=lambda *a, **k: None,
+            answer_callback=lambda *a, **k: None,
+        )
+        self.bot = b
+
+    def tearDown(self):
+        Path(self.db).unlink(missing_ok=True)
+
+    def _text(self, t):
+        self.bot._handle_update(
+            {"message": {"chat": {"id": 999}, "from": {"first_name": "Jim"}, "text": t}}
+        )
+
+    def _cb(self, data):
+        self.bot._handle_update(
+            {"callback_query": {"id": "c", "data": data,
+                                "message": {"chat": {"id": 999}, "message_id": 101}}}
+        )
+
+    def _alerts(self):
+        return AlertManager(self.db).list_alerts(999)
+
+    def test_fan_out_multi_theater_multi_format(self):
+        self._text("/addalert")
+        self._text("The Odyssey")
+        self._cb("t:amc-empire-25")
+        self._cb("t:amc-lincoln-square-13")
+        self._cb("t:done")
+        self._cb("f:imax")
+        self._cb("f:70mm")
+        self._cb("f:done")
+        rows = {(a.theater_slug, a.format_filter) for a in self._alerts()}
+        self.assertEqual(rows, {
+            ("amc-empire-25", "imax"), ("amc-empire-25", "70mm"),
+            ("amc-lincoln-square-13", "imax"), ("amc-lincoln-square-13", "70mm"),
+        })
+
+    def test_defaults_create_single_all_any_alert(self):
+        self._text("/addalert")
+        self._text("Dune")
+        self._cb("t:done")  # nothing selected -> all theaters
+        self._cb("f:done")  # nothing selected -> any format
+        alerts = self._alerts()
+        self.assertEqual(len(alerts), 1)
+        self.assertIsNone(alerts[0].theater_slug)
+        self.assertIsNone(alerts[0].format_filter)
+
+    def test_all_toggle_is_exclusive(self):
+        self._text("/addalert")
+        self._text("Wicked")
+        self._cb("t:amc-empire-25")
+        self._cb("t:*")  # selecting "all" clears the specific pick
+        self.assertEqual(self.bot._conversations[999]["theaters"], {"*"})
+
+    def test_cancel_creates_nothing(self):
+        self._text("/addalert")
+        self._text("Wicked")
+        self._cb("x")
+        self.assertEqual(self.bot._conversations, {})
+        self.assertEqual(self._alerts(), [])
+
+    def test_command_midflow_interrupts(self):
+        self._text("/addalert")
+        self._text("Wicked")
+        self._cb("t:done")
+        self._text("/listalerts")  # a command aborts the in-progress flow
+        self.assertEqual(self.bot._conversations, {})
+
+    def test_delalert_no_id_then_tap_deletes(self):
+        aid = AlertManager(self.db).add_alert(999, "Dune", format_filter="imax")
+        self._text("/delalert")  # no id -> picker; nothing deleted yet
+        self.assertEqual(len(self._alerts()), 1)
+        self._cb(f"del:{aid}")  # tap the alert's button
+        self.assertEqual(self._alerts(), [])
+
+    def test_delalert_picker_cancel_keeps_alert(self):
+        AlertManager(self.db).add_alert(999, "Dune")
+        self._text("/delalert")
+        self._cb("del:x")  # cancel
+        self.assertEqual(len(self._alerts()), 1)
+
+    def test_delalert_with_id_deletes_directly(self):
+        aid = AlertManager(self.db).add_alert(999, "Dune")
+        self._text(f"/delalert {aid}")
+        self.assertEqual(self._alerts(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

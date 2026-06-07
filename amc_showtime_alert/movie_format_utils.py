@@ -42,7 +42,7 @@ def higher_priority_format(a: str, b: str) -> str:
 
 # Friendly labels for normalized tokens, used in messages and listings.
 FORMAT_DISPLAY: dict = {
-    "70mm": "70mm",
+    "70mm": "Regular 70mm",
     "imax": "IMAX",
     "dolby": "Dolby Cinema",
     "screenx": "ScreenX",

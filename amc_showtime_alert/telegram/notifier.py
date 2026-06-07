@@ -16,11 +16,11 @@ except ImportError:
     sys.exit(1)
 
 # Import schema, notification state manager, and user manager
-from .schema import EventData, EventType, ShowtimeChange
-from .movie_format_utils import format_display
-from .notification_state import NotificationState, UserNotificationState
-from .user_manager import UserManager
-from .alert_matcher import AlertMatch
+from ..schema import EventData, EventType, ShowtimeChange
+from ..movie_format_utils import format_display
+from ..notification_state import NotificationState, UserNotificationState
+from ..user_manager import UserManager
+from ..alert_matcher import AlertMatch
 
 # Telegram API constants
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
@@ -602,7 +602,7 @@ def main() -> None:
     """Main entry point for Telegram notifications"""
     if len(sys.argv) != 3:
         print(
-            "Usage: python telegram_notifier.py "
+            "Usage: python -m amc_showtime_alert.telegram.notifier "
             "<special_events_json_file> <db_path>"
         )
         sys.exit(1)

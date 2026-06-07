@@ -11,6 +11,9 @@ Usage:
     # Test against a scratch database:
     python run_alert_pipeline.py --server --db test.db
 
+    # Reuse the latest scraped JSON instead of scraping (parse/notify/match only):
+    python run_alert_pipeline.py --db test.db --reuse
+
     # Use a custom config file:
     python run_alert_pipeline.py --db production.db --config /path/to/config.json
 """
@@ -33,8 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent / "amc_showtime_alert"))
 
 from amc_showtime_alert.amc_scraper import AMCShowtimeScraper
 from amc_showtime_alert.special_events_parser import find_special_events
-from amc_showtime_alert.telegram_notifier import TelegramNotifier
-from amc_showtime_alert.telegram_bot import TelegramBot
+from amc_showtime_alert.telegram import TelegramNotifier, TelegramBot
 from amc_showtime_alert.user_manager import UserManager
 from amc_showtime_alert.alert_manager import AlertManager
 from amc_showtime_alert.alert_matcher import find_alert_matches
@@ -59,7 +61,10 @@ class AlertPipeline:
     """Orchestrates the complete alert pipeline with deduplication"""
 
     def __init__(
-        self, db_path: str, config_path: str = DEFAULT_CONFIG_PATH
+        self,
+        db_path: str,
+        config_path: str = DEFAULT_CONFIG_PATH,
+        reuse_existing: bool = False,
     ):
         """
         Initialize the alert pipeline
@@ -67,9 +72,13 @@ class AlertPipeline:
         Args:
             config_path: Path to configuration file
             db_path: Path to notification state database
+            reuse_existing: If True, reuse the most recent scraped JSON in the
+                output dir instead of scraping AMC (useful for testing the
+                parse/notify/match stages without hitting the network).
         """
         self.config_path = config_path
         self.db_path = db_path
+        self.reuse_existing = reuse_existing
         self.output_dir = Path(OUTPUT_DIR)
         self.output_dir.mkdir(exist_ok=True)
 
@@ -272,6 +281,19 @@ class AlertPipeline:
         except Exception as e:
             self.logger.error(f"❌ Scraping failed: {e}", exc_info=True)
             return None
+
+    def _latest_scraped_file(self) -> Optional[str]:
+        """
+        Return the newest raw scrape JSON in the output dir, or None.
+
+        Matches only timestamped scrape files (amc_showtimes_<digits>...json),
+        so parsed/special and ad-hoc files are ignored.
+        """
+        pattern = str(self.output_dir / "amc_showtimes_[0-9]*.json")
+        candidates = glob_module.glob(pattern)
+        if not candidates:
+            return None
+        return max(candidates, key=os.path.getmtime)
 
     def run_parser(self, scraped_file: str) -> Optional[str]:
         """
@@ -525,8 +547,24 @@ class AlertPipeline:
             # Initialize metrics
             metrics["theaters_total"] = len(self.config.get("theaters", []))
 
-            # Step 1: Scrape
-            scraped_file = self.run_scraper()
+            # Step 1: Scrape (or reuse the latest existing scrape)
+            if self.reuse_existing:
+                scraped_file = self._latest_scraped_file()
+                if scraped_file:
+                    self.logger.info("\n" + "=" * LOG_SEPARATOR_WIDTH)
+                    self.logger.info(
+                        f"♻️  STEP 1: REUSING EXISTING SCRAPE (skip scraping)\n"
+                        f"    {scraped_file}"
+                    )
+                    self.logger.info("=" * LOG_SEPARATOR_WIDTH)
+                else:
+                    self.logger.warning(
+                        "♻️  Reuse mode: no existing scrape found — scraping fresh"
+                    )
+                    scraped_file = self.run_scraper()
+            else:
+                scraped_file = self.run_scraper()
+
             if not scraped_file:
                 self.logger.error("Pipeline failed at scraping step")
                 error_msg = "Scraping failed"
@@ -763,11 +801,19 @@ def main():
         action="store_true",
         help="Run in server mode with scheduled execution (interval from config)",
     )
+    parser.add_argument(
+        "--reuse",
+        action="store_true",
+        help="Reuse the latest scraped JSON in the output dir instead of "
+        "scraping AMC (parse/notify/match still run; useful for testing)",
+    )
 
     args = parser.parse_args()
 
     # Initialize pipeline
-    pipeline = AlertPipeline(config_path=args.config, db_path=args.db)
+    pipeline = AlertPipeline(
+        config_path=args.config, db_path=args.db, reuse_existing=args.reuse
+    )
 
     # Run in appropriate mode
     if args.server:
