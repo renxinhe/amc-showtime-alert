@@ -71,11 +71,12 @@ def parse_seating_layout(payload: str) -> Optional[SeatLayout]:
     """
     Extract the `seatingLayout` object from a seats RSC payload.
 
-    Returns None if it can't be found/parsed (e.g. AMC changed the format).
+    Returns None if it can't be found/parsed (caller logs with context).
     """
+    if '"seatingLayout"' not in payload:
+        return None
     try:
-        i = payload.index('"seatingLayout"')
-        start = payload.index("{", i)
+        start = payload.index("{", payload.index('"seatingLayout"'))
         depth = 0
         for k in range(start, len(payload)):
             ch = payload[k]
@@ -90,8 +91,8 @@ def parse_seating_layout(payload: str) -> Optional[SeatLayout]:
                         columns=obj.get("columns", 0),
                         seats=obj.get("seats", []) or [],
                     )
-    except (ValueError, json.JSONDecodeError) as e:
-        logger.warning(f"Could not parse seatingLayout: {e}")
+    except (ValueError, json.JSONDecodeError):
+        pass
     return None
 
 
@@ -100,15 +101,34 @@ def fetch_seat_layout(showtime_id: str, timeout: int = 30) -> Optional[SeatLayou
     url = f"{AMC_BASE_URL}/showtimes/{showtime_id}/seats?_rsc={RSC_TOKEN}"
     try:
         response = requests.get(url, headers=HEADERS, timeout=timeout)
-        if not response.ok:
-            logger.warning(
-                f"Seat fetch for {showtime_id} returned {response.status_code}"
-            )
-            return None
-        return parse_seating_layout(response.text)
     except requests.exceptions.RequestException as e:
         logger.warning(f"Seat fetch for {showtime_id} failed: {e}")
         return None
+
+    if not response.ok:
+        logger.warning(f"Seat fetch for {showtime_id} returned {response.status_code}")
+        return None
+
+    layout = parse_seating_layout(response.text)
+    if layout is None:
+        # A 2xx with no seatingLayout. The common, EXPECTED case is a fully
+        # sold-out showtime (AMC shows a "sold out" notice instead of the map) —
+        # that's normal for a watched show, so it's debug, not a warning. A
+        # virtual-queue/anti-bot page or anything else is genuinely noteworthy.
+        text = response.text
+        low = text.lower()
+        if "showtime is sold out" in low or "sold out, please choose" in low:
+            logger.debug(f"Seat map for {showtime_id}: sold out — no seats to show yet")
+        elif "queue.amctheatres" in text or "/queue" in text:
+            logger.warning(
+                f"Seat map for {showtime_id} unavailable — virtual queue (rate-limited?)"
+            )
+        else:
+            logger.warning(
+                f"Seat map for {showtime_id} unavailable — "
+                f"no seatingLayout in {len(text)} byte response"
+            )
+    return layout
 
 
 def fetch_showtime_meta(showtime_id: str, timeout: int = 30) -> Optional[dict]:
