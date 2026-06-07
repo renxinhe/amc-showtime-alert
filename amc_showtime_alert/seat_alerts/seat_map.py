@@ -33,6 +33,12 @@ except ImportError:
 
 logger = logging.getLogger("SeatMap")
 
+
+class RateLimited(Exception):
+    """AMC is throttling us — a 429 or the virtual-queue page. The poller should
+    stop fetching for this cycle rather than hammer the endpoint further."""
+
+
 AMC_BASE_URL = "https://www.amctheatres.com"
 # The ?_rsc=<value> query param is what makes AMC's edge serve the React Server
 # Component payload directly instead of redirecting to the virtual queue. Only
@@ -105,6 +111,8 @@ def fetch_seat_layout(showtime_id: str, timeout: int = 30) -> Optional[SeatLayou
         logger.warning(f"Seat fetch for {showtime_id} failed: {e}")
         return None
 
+    if response.status_code == 429:
+        raise RateLimited(f"429 Too Many Requests for {showtime_id}")
     if not response.ok:
         logger.warning(f"Seat fetch for {showtime_id} returned {response.status_code}")
         return None
@@ -113,16 +121,14 @@ def fetch_seat_layout(showtime_id: str, timeout: int = 30) -> Optional[SeatLayou
     if layout is None:
         # A 2xx with no seatingLayout. The common, EXPECTED case is a fully
         # sold-out showtime (AMC shows a "sold out" notice instead of the map) —
-        # that's normal for a watched show, so it's debug, not a warning. A
-        # virtual-queue/anti-bot page or anything else is genuinely noteworthy.
+        # that's normal for a watched show, so it's debug, not a warning. The
+        # virtual-queue page means we're being throttled → signal the poller.
         text = response.text
         low = text.lower()
         if "showtime is sold out" in low or "sold out, please choose" in low:
             logger.debug(f"Seat map for {showtime_id}: sold out — no seats to show yet")
         elif "queue.amctheatres" in text or "/queue" in text:
-            logger.warning(
-                f"Seat map for {showtime_id} unavailable — virtual queue (rate-limited?)"
-            )
+            raise RateLimited(f"virtual-queue page for {showtime_id}")
         else:
             logger.warning(
                 f"Seat map for {showtime_id} unavailable — "

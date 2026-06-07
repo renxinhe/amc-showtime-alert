@@ -41,7 +41,7 @@ from amc_showtime_alert.user_manager import UserManager
 from amc_showtime_alert.alert_manager import AlertManager
 from amc_showtime_alert.alert_matcher import find_alert_matches
 from amc_showtime_alert.seat_alerts.manager import SeatAlertManager
-from amc_showtime_alert.seat_alerts.poller import poll_seat_alerts
+from amc_showtime_alert.seat_alerts.poller import poll_seat_alerts, FETCH_DELAY_SECONDS
 from amc_showtime_alert.telegram.api import TelegramAPI
 from amc_showtime_alert.schema import EventData, EventType
 
@@ -511,16 +511,21 @@ class AlertPipeline:
                 return empty
 
             api = TelegramAPI(bot_token)
+            delay = self.config.get("server", {}).get(
+                "seat_poll_delay_seconds", FETCH_DELAY_SECONDS
+            )
             stats = poll_seat_alerts(
                 self.db_path,
                 send=lambda chat_id, text: api.send_message(chat_id, text),
                 send_photo=lambda chat_id, png, caption: api.send_photo(
                     chat_id, png, caption
                 ),
+                delay=delay,
             )
             self.logger.info(
                 f"🎟 Seat alerts: checked={stats['checked']} "
-                f"notified={stats['notified']} unreachable={stats['unreachable']}"
+                f"notified={stats['notified']} unreachable={stats['unreachable']} "
+                f"rate_limited={stats.get('rate_limited', 0)}"
             )
             return stats
         except Exception as e:

@@ -155,6 +155,23 @@ class TestSeatPoller(unittest.TestCase):
         self.assertIn("G5", photos[0][2])                     # caption text
         self.assertEqual(self.sent, [])                       # text path not used
 
+    def test_rate_limited_stops_cycle_early(self):
+        from amc_showtime_alert.seat_alerts.seat_map import RateLimited
+        # Add a second alert so there are two to poll.
+        self.mgr.create(CHAT, "222", TOMORROW, movie_name="Wicked")
+        calls = []
+
+        def fetch(sid):
+            calls.append(sid)
+            raise RateLimited("429")
+
+        stats = poll_seat_alerts(
+            self.db, send=lambda *a: True, fetch=fetch,
+            sleep=lambda *_: None, delay=0,
+        )
+        self.assertEqual(stats["rate_limited"], 1)
+        self.assertEqual(len(calls), 1)  # stopped after the first 429, didn't hammer
+
     def test_unreachable_layout_skipped(self):
         stats = poll_seat_alerts(
             self.db,
@@ -162,7 +179,9 @@ class TestSeatPoller(unittest.TestCase):
             fetch=lambda sid: None,  # transient failure
             sleep=lambda *_: None, delay=0,
         )
-        self.assertEqual(stats, {"checked": 1, "notified": 0, "unreachable": 1})
+        self.assertEqual(
+            stats, {"checked": 1, "notified": 0, "unreachable": 1, "rate_limited": 0}
+        )
         self.assertEqual(self.sent, [])
 
 
