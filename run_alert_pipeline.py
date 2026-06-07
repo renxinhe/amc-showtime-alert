@@ -40,6 +40,9 @@ from amc_showtime_alert.telegram import TelegramNotifier, TelegramBot
 from amc_showtime_alert.user_manager import UserManager
 from amc_showtime_alert.alert_manager import AlertManager
 from amc_showtime_alert.alert_matcher import find_alert_matches
+from amc_showtime_alert.seat_alerts.manager import SeatAlertManager
+from amc_showtime_alert.seat_alerts.poller import poll_seat_alerts
+from amc_showtime_alert.telegram.api import TelegramAPI
 from amc_showtime_alert.schema import EventData, EventType
 
 # Path constants
@@ -486,6 +489,44 @@ class AlertPipeline:
             self.logger.error(f"❌ Custom alert matching failed: {e}", exc_info=True)
             return empty
 
+    def run_seat_poller(self) -> Dict[str, int]:
+        """
+        Auto-expire past seat alerts (the day after the show), then poll every
+        active watched showing and notify owners when a good seat opens up.
+        """
+        self.logger.info("\n" + "=" * LOG_SEPARATOR_WIDTH)
+        self.logger.info("STEP 5: SEAT ALERTS")
+        self.logger.info("=" * LOG_SEPARATOR_WIDTH)
+
+        empty = {"checked": 0, "notified": 0, "unreachable": 0}
+        try:
+            # Soft-delete showings whose date has passed (day-after expiry).
+            expired = SeatAlertManager(self.db_path).expire_past()
+            if expired:
+                self.logger.info(f"🧹 Expired {expired} past seat alert(s)")
+
+            bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+            if not bot_token:
+                self.logger.error("❌ Missing TELEGRAM_BOT_TOKEN — skipping seat poll")
+                return empty
+
+            api = TelegramAPI(bot_token)
+            stats = poll_seat_alerts(
+                self.db_path,
+                send=lambda chat_id, text: api.send_message(chat_id, text),
+                send_photo=lambda chat_id, png, caption: api.send_photo(
+                    chat_id, png, caption
+                ),
+            )
+            self.logger.info(
+                f"🎟 Seat alerts: checked={stats['checked']} "
+                f"notified={stats['notified']} unreachable={stats['unreachable']}"
+            )
+            return stats
+        except Exception as e:
+            self.logger.error(f"❌ Seat alert step failed: {e}", exc_info=True)
+            return empty
+
     def _load_env_file(self):
         """Load environment variables from .env file"""
         env_file = Path(".env")
@@ -621,6 +662,10 @@ class AlertPipeline:
             metrics["sent"] += alert_stats.get("sent", 0)
             metrics["updated"] += alert_stats.get("updated", 0)
             metrics["skipped"] += alert_stats.get("skipped", 0)
+
+            # Step 5: Seat alerts (expire past ones, poll watched showings)
+            seat_stats = self.run_seat_poller()
+            metrics["sent"] += seat_stats.get("notified", 0)
 
             # Calculate elapsed time
             elapsed = (datetime.now() - start_time).total_seconds()

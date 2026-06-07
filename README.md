@@ -29,8 +29,10 @@ Users subscribe by sending `/start` to the Telegram bot.
 | `/addalert <keyword> [theater:<slug>] [format:<imax\|dolby\|70mm\|…>] [regex]` | Create a custom alert |
 | `/listalerts` | List your alerts and their ids |
 | `/editalert <id> [keyword] [theater:…] [format:…] [regex\|noregex]` | Edit an alert |
-| `/delalert <id>` | Delete an alert |
-| `/theaters` | List available theater slugs |
+| `/delalert [id]` | Delete an alert (tap to pick if no id) |
+| `/addseatalert` | Watch one showing for a good seat opening up |
+| `/listseatalerts` | List your seat alerts |
+| `/delseatalert` | Delete a seat alert (tap to pick) |
 | `/help` | Show all commands |
 
 **Custom alert examples:**
@@ -45,6 +47,13 @@ Users subscribe by sending `/start` to the Telegram bot.
 - Omit `theater:` to match **all** theaters; use `theater:all` to clear it on edit.
 - `keyword` matches titles case-insensitively; add `regex` to treat it as a regular expression.
 - A custom alert notifies **only its owner**, once per match, and again only when its showtimes change. This is independent of the global Q&A broadcast that every subscriber receives.
+
+**Seat alerts** — watch one specific screening and get pinged when a *good* seat opens up:
+
+- `/addseatalert` walks you through **theater → month → day → movie → showtime** (tap buttons; ◀️ Back at every step). Each showtime is identified by its AMC showtime id.
+- A "good seat" is computed per auditorium: in the **back 60% of rows** (i.e. skipping the front 40%; row 1 = front) and the **centre 15–85% of columns**. Wheelchair spaces, gaps, and non-displayed seats are excluded.
+- The poller checks each watched showing every cycle and messages you when a good seat becomes **newly available** (a seat that's taken then frees up alerts again; a continuously-open seat doesn't repeat).
+- Alerts auto-expire (soft delete) the day after the showtime. Delete early with `/delseatalert`.
 
 ## Running
 

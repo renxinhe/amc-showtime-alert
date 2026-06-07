@@ -38,4 +38,4 @@ jobs:
         # These suites are hermetic (tempfile DBs, no network or bot token).
         # The scraper/end-to-end notifier tests are excluded as they require
         # live AMC access and a Telegram token.
-        run: python -m unittest -v test.test_custom_alerts test.test_format_parsing
+        run: python -m unittest -v test.test_custom_alerts test.test_format_parsing test.test_seat_map test.test_seat_alerts test.test_seat_render

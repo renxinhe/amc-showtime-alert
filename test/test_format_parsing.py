@@ -18,6 +18,7 @@ from amc_showtime_alert.movie_format_utils import (
     detect_format_label,
     higher_priority_format,
     normalize_format,
+    resolve_block_formats,
 )
 
 
@@ -45,6 +46,42 @@ class TestFormatUtils(unittest.TestCase):
         self.assertEqual(higher_priority_format("imax", "70mm"), "imax")
         self.assertEqual(higher_priority_format("70mm", "imax"), "imax")
         self.assertEqual(higher_priority_format("dolby", "3d"), "dolby")
+
+
+class TestResolveBlockFormats(unittest.TestCase):
+    """The shared resolver used by both the scraper and the seat-alert picker."""
+
+    def test_imax_70mm_block_classifies_as_imax(self):
+        # AMC's "IMAX 70MM : tagline, IMAX at AMC, 70mm, <showtimes>" block.
+        events = [
+            ("fmt", "imax"), ("colon", None),   # IMAX 70MM : tagline
+            ("fmt", "imax"),                     # IMAX at AMC
+            ("fmt", "70mm"),                     # 70mm  (sub-label)
+            ("item", "7:00 AM"),
+            ("item", "11:00 AM"),
+        ]
+        self.assertEqual(
+            resolve_block_formats(events),
+            [("7:00 AM", "imax"), ("11:00 AM", "imax")],
+        )
+
+    def test_standalone_70mm_block_stays_70mm(self):
+        events = [("fmt", "70mm"), ("colon", None), ("item", "8:30 AM")]
+        self.assertEqual(resolve_block_formats(events), [("8:30 AM", "70mm")])
+
+    def test_separate_blocks_keep_their_formats(self):
+        events = [
+            ("fmt", "imax"), ("colon", None), ("item", "7:00 AM"),
+            ("fmt", "dolby"), ("colon", None), ("item", "10:00 AM"),
+            ("fmt", "70mm"), ("colon", None), ("item", "8:30 AM"),
+        ]
+        self.assertEqual(
+            resolve_block_formats(events),
+            [("7:00 AM", "imax"), ("10:00 AM", "dolby"), ("8:30 AM", "70mm")],
+        )
+
+    def test_item_without_format(self):
+        self.assertEqual(resolve_block_formats([("item", "1:00 PM")]), [("1:00 PM", None)])
 
 
 class TestResolveShowtimeFormats(unittest.TestCase):

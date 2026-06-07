@@ -68,6 +68,13 @@ class GuidedFlowMixin:
         if data.startswith("del:"):
             self._handle_delete_callback(chat_id, message_id, data[4:])
             return
+        # Seat-alert delete picker (stateless) and create flow (conversational).
+        if data.startswith("sad:"):
+            self._handle_seat_delete_callback(chat_id, message_id, data[4:])
+            return
+        if data.startswith("sa:"):
+            self._handle_seat_callback(chat_id, message_id, data)
+            return
 
         conv = self._conversations.get(chat_id)
         if not conv:
