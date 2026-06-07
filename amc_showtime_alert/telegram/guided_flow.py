@@ -14,6 +14,7 @@ from ..alert_matcher import validate_pattern
 from ..movie_format_utils import KNOWN_FORMAT_TOKENS
 from ..user_manager import UserManager
 from . import formatting, keyboards
+from . import messages as msg
 
 
 class GuidedFlowMixin:
@@ -28,29 +29,19 @@ class GuidedFlowMixin:
             "formats": set(),   # tokens, or "*" for any
             "message_id": None,
         }
-        self._api.send_message(
-            chat_id,
-            "🎬 <b>New alert</b>\n\n"
-            "Send me the movie title or keyword to watch for "
-            "(e.g. <i>Dune</i>).\n\nSend /cancel anytime to stop.",
-            parse_mode="HTML",
-        )
+        self._api.send_message(chat_id, msg.GUIDED_TITLE_PROMPT, parse_mode="HTML")
 
     def _flow_set_title(self, chat_id: int, title: str):
         ok, err = validate_pattern(title, is_regex=False)
         if not ok:
-            self._api.send_message(chat_id, f"❌ {err}\nTry again, or send /cancel.")
+            self._api.send_message(chat_id, msg.GUIDED_TITLE_INVALID.format(err=err))
             return
         conv = self._conversations.get(chat_id)
         if not conv:
             return
         conv["pattern"] = title
         conv["step"] = "theaters"
-        text = (
-            f"🎬 <b>{formatting.html_escape(title)}</b>\n\n"
-            "Which theaters? Tap to toggle, then <b>Next</b>.\n"
-            "<i>(none selected = all theaters)</i>"
-        )
+        text = msg.GUIDED_THEATER_PROMPT.format(title=formatting.html_escape(title))
         conv["message_id"] = self._api.send_picker(
             chat_id, text, keyboards.theater_keyboard(self.theaters, conv["theaters"])
         )
@@ -82,18 +73,14 @@ class GuidedFlowMixin:
 
         if data == "x":
             self._conversations.pop(chat_id, None)
-            self._api.edit_message(
-                chat_id, message_id, "✖️ Cancelled. Nothing was created."
-            )
+            self._api.edit_message(chat_id, message_id, msg.CANCELLED_NOTHING)
             return
 
         if conv["step"] == "theaters":
             if data == "t:done":
                 conv["step"] = "formats"
-                text = (
-                    f"🎬 <b>{formatting.html_escape(conv['pattern'])}</b>\n\n"
-                    "Which formats? Tap to toggle, then <b>Create</b>.\n"
-                    "<i>(none selected = any format)</i>"
+                text = msg.GUIDED_FORMAT_PROMPT.format(
+                    title=formatting.html_escape(conv["pattern"])
                 )
                 self._api.edit_message(
                     chat_id, message_id, text,
@@ -148,20 +135,18 @@ class GuidedFlowMixin:
                     created.append(am.get_alert(chat_id, aid))
 
         if not created:
-            self._api.edit_message(
-                chat_id, message_id, "❌ Could not create the alert(s). Try again."
-            )
+            self._api.edit_message(chat_id, message_id, msg.GUIDED_CREATE_FAILED)
             return
 
         if len(created) == 1:
-            body = "✅ <b>Alert created</b>\n" + formatting.format_alert_card(
+            body = msg.ALERT_CREATED_HEADER + "\n" + formatting.format_alert_card(
                 created[0], self._name_by_slug
             )
         else:
             body = (
-                f"✅ <b>{len(created)} alerts created</b>\n"
+                msg.ALERTS_CREATED_HEADER.format(n=len(created)) + "\n"
                 + formatting.format_alerts_table(created, self._name_by_slug)
             )
         if chat_id not in set(UserManager(self.db_path).get_active_subscribers()):
-            body += "\n\n⚠️ You're not subscribed — send /start to receive alerts."
+            body += msg.NOT_SUBSCRIBED_SUFFIX
         self._api.edit_message(chat_id, message_id, body)
