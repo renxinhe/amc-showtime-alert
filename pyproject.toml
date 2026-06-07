@@ -16,6 +16,6 @@ dependencies = [
 [project.scripts]
 amc-scraper = "amc_showtime_alert.amc_scraper:main"
 amc-parser = "amc_showtime_alert.special_events_parser:main"
-amc-telegram = "amc_showtime_alert.telegram_notifier:main"
+amc-telegram = "amc_showtime_alert.telegram.notifier:main"
 
 [tool.setuptools.packages.find]
