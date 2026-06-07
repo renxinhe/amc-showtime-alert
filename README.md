@@ -1,5 +1,6 @@
 # AMC Showtime Alert
 
+[![CI](https://github.com/renxinhe/amc-showtime-alert/actions/workflows/ci.yml/badge.svg)](https://github.com/renxinhe/amc-showtime-alert/actions/workflows/ci.yml)
 [![AMC Showtime Alert](https://healthchecks.io/b/2/cd80e297-2c8d-46ba-86f9-5469a94da7f5.svg)](https://healthchecks.io)
 
 Monitors AMC theaters for special events (Q&As, special screenings) and sends Telegram notifications. Users can also create their own **custom alerts** for any movie, theater, and format (IMAX, Dolby, 70mm, …). Runs as a systemd service on a Raspberry Pi.
