@@ -14,12 +14,13 @@ from typing import List, Optional
 from .api import TelegramAPI, ERROR_BACKOFF_SECONDS, LONG_POLL_TIMEOUT
 from .commands import CommandsMixin
 from .guided_flow import GuidedFlowMixin
+from .seat_flow import SeatAlertFlowMixin
 from .messages import BOT_COMMANDS, HELP_MESSAGE
 
 import time
 
 
-class TelegramBot(CommandsMixin, GuidedFlowMixin):
+class TelegramBot(CommandsMixin, GuidedFlowMixin, SeatAlertFlowMixin):
     """
     Listens for commands and inline-button presses via long-polling and manages
     user subscriptions and custom alerts in the database.
@@ -159,6 +160,12 @@ class TelegramBot(CommandsMixin, GuidedFlowMixin):
             self._handle_editalert(chat_id, args)
         elif command == "/delalert":
             self._handle_delalert(chat_id, args)
+        elif command == "/addseatalert":
+            self._handle_addseatalert(chat_id, args)
+        elif command == "/listseatalerts":
+            self._handle_listseatalerts(chat_id)
+        elif command == "/delseatalert":
+            self._handle_delseatalert(chat_id)
         else:
             self._api.send_message(
                 chat_id, "Unknown command. Send /help to see available commands."

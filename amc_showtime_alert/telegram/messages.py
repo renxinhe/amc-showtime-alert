@@ -32,7 +32,11 @@ HELP_MESSAGE = (
     "/addalert — guided setup: pick theaters & formats with buttons\n"
     "/listalerts — show your alerts and their ids\n"
     "/editalert <id> [keyword] [theater:…] [format:…] [regex|noregex]\n"
-    "/delalert [id] — delete an alert (tap to pick if no id given)\n"
+    "/delalert [id] — delete an alert (tap to pick if no id given)\n\n"
+    "Seat alerts — watch one specific showing for a good seat opening up:\n"
+    "/addseatalert — pick theater → date → movie → showtime\n"
+    "/listseatalerts — show your seat alerts\n"
+    "/delseatalert — delete a seat alert (tap to pick)\n"
     "/cancel — stop the guided setup\n\n"
     "Prefer typing? You can still pass everything inline:\n"
     '  /addalert Oppenheimer format:imax\n'
@@ -49,6 +53,9 @@ BOT_COMMANDS = [
     {"command": "listalerts", "description": "List your custom alerts"},
     {"command": "editalert", "description": "Edit an existing alert"},
     {"command": "delalert", "description": "Delete an alert"},
+    {"command": "addseatalert", "description": "Watch a showing for a good seat"},
+    {"command": "listseatalerts", "description": "List your seat alerts"},
+    {"command": "delseatalert", "description": "Delete a seat alert"},
     {"command": "cancel", "description": "Cancel the guided alert setup"},
     {"command": "help", "description": "Show available commands"},
 ]

@@ -40,6 +40,47 @@ def higher_priority_format(a: str, b: str) -> str:
     ib = order.index(b) if b in order else len(order)
     return a if ia <= ib else b
 
+
+def resolve_block_formats(events):
+    """
+    Resolve the premium format of each showtime from an ordered event stream.
+
+    AMC renders each experience block as a primary heading followed by ":" and a
+    tagline, then its showtimes — and a block may carry secondary format
+    sub-labels before its showtimes (e.g. "IMAX 70mm" then "IMAX at AMC" then
+    "70mm"). A format label followed by ":" starts a block; a label not followed
+    by ":" either starts a new block (when the previous one already produced
+    showtimes) or refines the current block, keeping the higher-priority format
+    (so "IMAX 70mm" + "70mm" resolves to "imax", not "70mm").
+
+    Args:
+        events: ordered list of (kind, value) where kind is one of:
+            "fmt"   -> value is a normalized format token
+            "colon" -> the ":" delimiter (value ignored)
+            "item"  -> a showtime; value is opaque (returned back to the caller)
+
+    Returns:
+        list of (item_value, format_token_or_None), one per "item" event, in order.
+    """
+    current = None
+    emitted_since_label = False
+    out = []
+    n = len(events)
+    for i, (kind, value) in enumerate(events):
+        if kind == "fmt":
+            followed_by_colon = i + 1 < n and events[i + 1][0] == "colon"
+            if followed_by_colon:
+                current, emitted_since_label = value, False
+            elif current is None or emitted_since_label:
+                current, emitted_since_label = value, False
+            else:
+                current = higher_priority_format(current, value)
+        elif kind == "item":
+            out.append((value, current))
+            emitted_since_label = True
+    return out
+
+
 # Friendly labels for normalized tokens, used in messages and listings.
 FORMAT_DISPLAY: dict = {
     "70mm": "Regular 70mm",

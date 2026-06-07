@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 from .schema import DailyShowtimes, Movie, Showtime
-from .movie_format_utils import detect_format_label, higher_priority_format
+from .movie_format_utils import detect_format_label, resolve_block_formats
 
 
 class AMCShowtimeScraper:
@@ -373,36 +373,18 @@ class AMCShowtimeScraper:
 
     def _resolve_showtime_formats(self, seq) -> Dict[str, set]:
         """
-        Resolve each showtime's premium format(s) from the flattened sequence.
+        Resolve each showtime's premium format(s) from the flattened sequence,
+        delegating the block logic to the shared resolver so the scraper and the
+        seat-alert listing parser stay consistent (e.g. "IMAX 70mm" -> "imax").
 
-        A format label that is immediately followed by ":" is a block's primary
-        heading and starts a new experience block. A label that is NOT followed by
-        ":" either starts a new block (when the previous block already produced
-        showtimes, e.g. a lone "Laser at AMC" before its times) or refines the
-        current block as a secondary sub-label, in which case the higher-priority
-        format is kept (so "IMAX 70mm" + "70mm" resolves to "imax").
+        Returns time -> set of format tokens (a time can recur under formats).
         """
+        events = [("item", v) if kind == "time" else (kind, v) for kind, v in seq]
         formats_by_time: Dict[str, set] = {}
-        current_format: Optional[str] = None
-        emitted_since_label = False  # has a showtime been seen for current_format?
-
-        for i, (kind, value) in enumerate(seq):
-            if kind == "fmt":
-                followed_by_colon = i + 1 < len(seq) and seq[i + 1][0] == "colon"
-                if followed_by_colon:
-                    current_format = value
-                    emitted_since_label = False
-                elif current_format is None or emitted_since_label:
-                    current_format = value
-                    emitted_since_label = False
-                else:
-                    current_format = higher_priority_format(current_format, value)
-            elif kind == "time":
-                fmts = formats_by_time.setdefault(value, set())
-                if current_format:
-                    fmts.add(current_format)
-                emitted_since_label = True
-
+        for time_str, fmt in resolve_block_formats(events):
+            bucket = formats_by_time.setdefault(time_str, set())
+            if fmt:
+                bucket.add(fmt)
         return formats_by_time
 
     def _is_theater_name(self, name: str) -> bool:

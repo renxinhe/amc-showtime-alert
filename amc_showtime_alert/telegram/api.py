@@ -160,6 +160,27 @@ class TelegramAPI:
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Error answering callback: {e}")
 
+    def send_photo(
+        self, chat_id: int, png_bytes: bytes, caption: Optional[str] = None
+    ) -> bool:
+        """Send a PNG photo (multipart) with an optional caption."""
+        url = f"{self._base}/sendPhoto"
+        data: dict = {"chat_id": chat_id}
+        if caption:
+            data["caption"] = caption
+        files = {"photo": ("seats.png", png_bytes, "image/png")}
+        try:
+            response = requests.post(url, data=data, files=files, timeout=30)
+            if not response.ok:
+                self.logger.error(
+                    f"Failed to send photo to {chat_id}: "
+                    f"{response.status_code} {response.text[:200]}"
+                )
+            return response.ok
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Error sending photo to {chat_id}: {e}")
+            return False
+
     def set_my_commands(self, commands: List[dict]) -> bool:
         url = f"{self._base}/setMyCommands"
         try:
