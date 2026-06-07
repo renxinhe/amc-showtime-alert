@@ -5,12 +5,13 @@ Centralized dataclasses and enums used across the AMC Showtime Alert system.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import List, Optional
 
 
 # Enums
+# TODO: remove event types and use title keyword matching instead
 class EventType(StrEnum):
     """String enum for special event types"""
 
@@ -50,6 +51,14 @@ class EventData:
 
 # Scraper-related dataclasses
 @dataclass
+class Showtime:
+    """A single showtime and the premium format(s) it is offered in"""
+
+    time: str
+    formats: List[str] = field(default_factory=list)
+
+
+@dataclass
 class Movie:
     """Represents a movie with its details"""
 
@@ -57,7 +66,9 @@ class Movie:
     slug: str
     runtime: Optional[int]
     rating: str
+    # TODO: deprecate showtimes in favor of showtime_details
     showtimes: List[str]
+    showtime_details: List[Showtime] = field(default_factory=list)
 
     def is_valid(self) -> bool:
         """Validate movie data"""

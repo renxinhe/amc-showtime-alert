@@ -17,8 +17,10 @@ except ImportError:
 
 # Import schema, notification state manager, and user manager
 from .schema import EventData, EventType, ShowtimeChange
-from .notification_state import NotificationState
+from .movie_format_utils import format_display
+from .notification_state import NotificationState, UserNotificationState
 from .user_manager import UserManager
+from .alert_matcher import AlertMatch
 
 # Telegram API constants
 TELEGRAM_API_BASE_URL = "https://api.telegram.org"
@@ -108,7 +110,7 @@ class TelegramNotifier:
         self,
         events: list[EventData],
         chat_ids: list[str],
-        db_path: str = "notifications.db",
+        db_path: str,
     ) -> dict[str, int]:
         """
         Send notifications with smart deduplication using NotificationState
@@ -208,6 +210,124 @@ class TelegramNotifier:
         print(f"   Upcoming events: {db_stats.get('upcoming_events', 0)}")
 
         return stats
+
+    def send_alert_notifications(
+        self,
+        matches: list[AlertMatch],
+        db_path: str,
+    ) -> dict[str, int]:
+        """
+        Send per-user custom-alert notifications with deduplication.
+
+        Unlike the global Q&A broadcast, each match is sent only to its owning
+        user (match.chat_id). Dedup/change-detection is per
+        (chat_id, alert, theater, date, movie) via UserNotificationState.
+
+        Returns statistics: sent, failed, skipped, updated.
+        """
+        stats = {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
+
+        if not matches:
+            print("📱 No custom-alert matches to process")
+            return stats
+
+        print(f"🔍 Checking {len(matches)} alert match(es) for notifications...")
+        state = UserNotificationState(db_path)
+
+        for match in matches:
+            should_notify, changes = state.should_notify(match)
+            if not should_notify:
+                stats["skipped"] += 1
+                continue
+
+            is_update = changes is not None
+            if is_update:
+                message = self._format_alert_update_message(match, changes)
+            else:
+                message = self._format_alert_match_message(match)
+
+            if self._send_message(message, str(match.chat_id)):
+                state.mark_as_notified(match, is_update=is_update)
+                stats["sent"] += 1
+                if is_update:
+                    stats["updated"] += 1
+            else:
+                stats["failed"] += 1
+
+            # Rate limiting between sends
+            time.sleep(RATE_LIMIT_DELAY_SECONDS)
+
+        # Cleanup old dedup rows
+        deleted = state.cleanup_old_entries(days=self.retention_days)
+        if deleted > 0:
+            print(f"🧹 Cleaned up {deleted} old user-notification records")
+
+        print(
+            f"\n📊 Custom Alert Statistics:\n"
+            f"   🆕 Sent: {stats['sent'] - stats['updated']}\n"
+            f"   🔄 Updated: {stats['updated']}\n"
+            f"   ⏭️  Skipped: {stats['skipped']}\n"
+            f"   ❌ Failures: {stats['failed']}"
+        )
+        return stats
+
+    def _format_alert_match_message(self, match: AlertMatch) -> str:
+        """Format a new custom-alert match notification"""
+        runtime_str = f"_{match.runtime}min_" if match.runtime else ""
+        rating_str = f"[{match.rating}]" if match.rating else ""
+        showtimes = ", ".join(match.matched_showtimes)
+        now = datetime.now().astimezone()
+
+        message = (
+            f"🔔 *Showtime Alert!*\n"
+            f"*{now.strftime('%Y-%m-%d %H:%M:%S %Z')}*\n\n"
+            f"*{match.movie_name}*\n"
+            f"📍 {match.theater}\n"
+            f"📅 {match.date}\n"
+        )
+        if match.format_filter:
+            message += f"🎟 {format_display(match.format_filter)}\n"
+        message += (
+            f"⏳ {runtime_str} {rating_str}\n"
+            f"⏰ {showtimes}\n\n"
+            f"_Matched your alert #{match.alert_id}_"
+        )
+        return message.strip()
+
+    def _format_alert_update_message(
+        self, match: AlertMatch, changes: ShowtimeChange
+    ) -> str:
+        """Format an update notification when an alert's showtimes change"""
+        runtime_str = f"_{match.runtime}min_" if match.runtime else ""
+        rating_str = f"[{match.rating}]" if match.rating else ""
+        now = datetime.now().astimezone()
+
+        message = (
+            f"🔔 *Updated Showtime Alert*\n"
+            f"*{now.strftime('%Y-%m-%d %H:%M:%S %Z')}*\n\n"
+            f"*{match.movie_name}*\n"
+            f"📍 {match.theater}\n"
+            f"📅 {match.date}\n"
+        )
+        if match.format_filter:
+            message += f"🎟 {format_display(match.format_filter)}\n"
+        message += "\n"
+
+        if changes.added:
+            message += "✅ *New showtimes:*\n"
+            for t in changes.added:
+                message += f"  ⏰ {t}\n"
+        if changes.removed:
+            message += "\n❌ *Removed showtimes:*\n"
+            for t in changes.removed:
+                message += f"  ⏰ {t}\n"
+        if changes.unchanged:
+            message += "\n📌 *Still available:*\n"
+            for t in changes.unchanged:
+                message += f"  ⏰ {t}\n"
+
+        message += f"\n_Matched your alert #{match.alert_id}_"
+        return message.strip()
 
     def _test_bot_connection(self) -> bool:
         """Test if bot token is valid and bot is accessible"""
@@ -480,11 +600,15 @@ def load_env_file() -> None:
 
 def main() -> None:
     """Main entry point for Telegram notifications"""
-    if len(sys.argv) != 2:
-        print("Usage: python telegram_notifier.py <special_events_json_file>")
+    if len(sys.argv) != 3:
+        print(
+            "Usage: python telegram_notifier.py "
+            "<special_events_json_file> <db_path>"
+        )
         sys.exit(1)
 
     json_file = sys.argv[1]
+    db_path = sys.argv[2]
     load_env_file()
 
     try:
@@ -495,7 +619,7 @@ def main() -> None:
             print("📱 No special events found to notify about")
             sys.exit(0)
 
-        user_mgr = UserManager()
+        user_mgr = UserManager(db_path)
         chat_ids = [str(cid) for cid in user_mgr.get_active_subscribers()]
         if not chat_ids:
             print("📱 No active subscribers found")

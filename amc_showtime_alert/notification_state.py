@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .schema import EventData, ShowtimeChange
+from .alert_matcher import AlertMatch
 
 
 # Database configuration
-DEFAULT_DB_PATH = "notifications.db"
 DEFAULT_RETENTION_DAYS = 30
 
 # Database schema
@@ -48,7 +48,7 @@ CREATE_INDEXES = (
 class NotificationState:
     """Manages notification state in SQLite database"""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str):
         """
         Initialize notification state manager
 
@@ -346,3 +346,211 @@ class NotificationState:
         except sqlite3.Error as e:
             self.logger.error(f"Database error getting event history: {e}")
             return None
+
+
+CREATE_USER_NOTIFICATIONS_TABLE = """
+    CREATE TABLE IF NOT EXISTS user_notifications (
+        chat_id           INTEGER NOT NULL,
+        alert_id          INTEGER NOT NULL,
+        theater_slug      TEXT    NOT NULL,
+        date              TEXT    NOT NULL,
+        movie_slug        TEXT    NOT NULL,
+        movie_name        TEXT    NOT NULL,
+        matched_showtimes TEXT    NOT NULL,
+        format_filter     TEXT,
+        first_notified_at TIMESTAMP NOT NULL,
+        last_updated_at   TIMESTAMP NOT NULL,
+        notification_count INTEGER DEFAULT 1,
+        PRIMARY KEY (chat_id, alert_id, theater_slug, date, movie_slug)
+    )
+"""
+
+CREATE_USER_NOTIFICATIONS_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_un_date ON user_notifications(date)",
+    "CREATE INDEX IF NOT EXISTS idx_un_alert ON user_notifications(alert_id)",
+)
+
+
+class UserNotificationState:
+    """
+    Per-user notification dedup for custom alerts.
+
+    Mirrors NotificationState's change-detection logic, but keyed per
+    (chat_id, alert_id, theater, date, movie) so the same movie can notify
+    multiple users — and multiple alerts of one user — independently. Comparison
+    is on the alert's matched (format-filtered) showtimes, so a change to times
+    in the chosen format is detected while unrelated times are ignored.
+    """
+
+    def __init__(self, db_path: str):
+        self.db_path = Path(db_path)
+        self.logger = logging.getLogger("UserNotificationState")
+        self._init_database()
+
+    def _init_database(self):
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(CREATE_USER_NOTIFICATIONS_TABLE)
+                for index_sql in CREATE_USER_NOTIFICATIONS_INDEXES:
+                    cursor.execute(index_sql)
+                conn.commit()
+            self.logger.debug(f"user_notifications table ready at {self.db_path}")
+        except sqlite3.Error as e:
+            self.logger.error(f"Database initialization error: {e}")
+            raise
+
+    @staticmethod
+    def _key(match: AlertMatch) -> Tuple[int, int, str, str, str]:
+        return (
+            match.chat_id,
+            match.alert_id,
+            match.theater_slug,
+            match.date,
+            match.slug,
+        )
+
+    def should_notify(
+        self, match: AlertMatch
+    ) -> Tuple[bool, Optional[ShowtimeChange]]:
+        """
+        Decide whether a match warrants a notification.
+
+        Returns:
+            (True, None)            -> new match, notify
+            (True, ShowtimeChange)  -> matched showtimes changed, notify
+            (False, None)           -> already notified, unchanged, skip
+        """
+        chat_id, alert_id, theater_slug, date, slug = self._key(match)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT matched_showtimes FROM user_notifications
+                    WHERE chat_id = ? AND alert_id = ? AND theater_slug = ?
+                      AND date = ? AND movie_slug = ?
+                    """,
+                    (chat_id, alert_id, theater_slug, date, slug),
+                )
+                result = cursor.fetchone()
+
+                if result is None:
+                    return True, None
+
+                existing = set(json.loads(result[0]))
+                new = set(match.matched_showtimes)
+                if existing == new:
+                    return False, None
+
+                changes = ShowtimeChange(
+                    added=sorted(new - existing),
+                    removed=sorted(existing - new),
+                    unchanged=sorted(existing & new),
+                )
+                return True, changes
+
+        except sqlite3.Error as e:
+            self.logger.error(f"Database error checking user notification: {e}")
+            # Prefer a duplicate over a miss.
+            return True, None
+        except json.JSONDecodeError as e:
+            self.logger.error(f"JSON decode error: {e}")
+            return True, None
+
+    def mark_as_notified(self, match: AlertMatch, is_update: bool = False):
+        """Insert or update the dedup record for a notified match"""
+        chat_id, alert_id, theater_slug, date, slug = self._key(match)
+        now = datetime.now().isoformat()
+        showtimes_json = json.dumps(match.matched_showtimes)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                if is_update:
+                    cursor.execute(
+                        """
+                        UPDATE user_notifications
+                        SET matched_showtimes = ?,
+                            movie_name = ?,
+                            format_filter = ?,
+                            last_updated_at = ?,
+                            notification_count = notification_count + 1
+                        WHERE chat_id = ? AND alert_id = ? AND theater_slug = ?
+                          AND date = ? AND movie_slug = ?
+                        """,
+                        (
+                            showtimes_json,
+                            match.movie_name,
+                            match.format_filter,
+                            now,
+                            chat_id,
+                            alert_id,
+                            theater_slug,
+                            date,
+                            slug,
+                        ),
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT OR REPLACE INTO user_notifications
+                            (chat_id, alert_id, theater_slug, date, movie_slug,
+                             movie_name, matched_showtimes, format_filter,
+                             first_notified_at, last_updated_at, notification_count)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                        """,
+                        (
+                            chat_id,
+                            alert_id,
+                            theater_slug,
+                            date,
+                            slug,
+                            match.movie_name,
+                            showtimes_json,
+                            match.format_filter,
+                            now,
+                            now,
+                        ),
+                    )
+                conn.commit()
+        except sqlite3.Error as e:
+            self.logger.error(f"Database error marking user notification: {e}")
+            raise
+
+    def delete_by_alert(self, alert_id: int) -> int:
+        """
+        Remove all dedup rows for an alert (called when it is edited or deleted)
+        so a recreated/changed alert re-arms its notifications.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM user_notifications WHERE alert_id = ?",
+                    (alert_id,),
+                )
+                conn.commit()
+                return cursor.rowcount
+        except sqlite3.Error as e:
+            self.logger.error(f"Database error deleting alert state {alert_id}: {e}")
+            return 0
+
+    def cleanup_old_entries(self, days: int = DEFAULT_RETENTION_DAYS) -> int:
+        """Remove dedup rows for past dates older than the retention window"""
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM user_notifications WHERE date < ?", (cutoff,)
+                )
+                deleted = cursor.rowcount
+                conn.commit()
+                if deleted > 0:
+                    self.logger.info(
+                        f"Cleaned up {deleted} old user_notification records"
+                    )
+                return deleted
+        except sqlite3.Error as e:
+            self.logger.error(f"Database error during cleanup: {e}")
+            return 0

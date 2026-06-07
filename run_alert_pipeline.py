@@ -5,20 +5,14 @@ Runs the complete pipeline: Scrape → Parse → Notify (with deduplication)
 Designed to be run frequently without spamming users
 
 Usage:
-    # Single run (scrape, parse, and send notifications once):
-    python run_alert_pipeline.py
-
     # Server mode (runs continuously on a timer set in config.json):
-    python run_alert_pipeline.py --server
+    python run_alert_pipeline.py --server --db production.db
+
+    # Test against a scratch database:
+    python run_alert_pipeline.py --server --db test.db
 
     # Use a custom config file:
-    python run_alert_pipeline.py --config /path/to/config.json
-
-    # Use a custom notification database:
-    python run_alert_pipeline.py --db /path/to/notifications.db
-
-    # Server mode with custom config and database:
-    python run_alert_pipeline.py --server --config /path/to/config.json --db /path/to/notifications.db
+    python run_alert_pipeline.py --db production.db --config /path/to/config.json
 """
 
 import json
@@ -42,11 +36,12 @@ from amc_showtime_alert.special_events_parser import find_special_events
 from amc_showtime_alert.telegram_notifier import TelegramNotifier
 from amc_showtime_alert.telegram_bot import TelegramBot
 from amc_showtime_alert.user_manager import UserManager
+from amc_showtime_alert.alert_manager import AlertManager
+from amc_showtime_alert.alert_matcher import find_alert_matches
 from amc_showtime_alert.schema import EventData, EventType
 
 # Path constants
 DEFAULT_CONFIG_PATH = "config.json"
-DEFAULT_DB_PATH = "notifications.db"
 OUTPUT_DIR = "output"
 
 # Filename pattern constants
@@ -64,7 +59,7 @@ class AlertPipeline:
     """Orchestrates the complete alert pipeline with deduplication"""
 
     def __init__(
-        self, config_path: str = DEFAULT_CONFIG_PATH, db_path: str = DEFAULT_DB_PATH
+        self, db_path: str, config_path: str = DEFAULT_CONFIG_PATH
     ):
         """
         Initialize the alert pipeline
@@ -417,6 +412,58 @@ class AlertPipeline:
             self.logger.error(f"❌ Notification failed: {e}", exc_info=True)
             return {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
 
+    def run_alert_matcher(self, scraped_file: str) -> Dict[str, int]:
+        """
+        Match all scraped movies against users' custom alerts and notify each
+        user about their own matches (independent of the global Q&A broadcast).
+
+        Args:
+            scraped_file: Path to the raw scraped showtimes JSON file
+
+        Returns:
+            Dictionary with notification statistics
+        """
+        self.logger.info("\n" + "=" * LOG_SEPARATOR_WIDTH)
+        self.logger.info("STEP 4: MATCHING CUSTOM USER ALERTS")
+        self.logger.info("=" * LOG_SEPARATOR_WIDTH)
+
+        empty = {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
+        try:
+            bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+            if not bot_token:
+                self.logger.error("❌ Missing TELEGRAM_BOT_TOKEN in .env file")
+                return empty
+
+            alerts = AlertManager(self.db_path).get_active_alerts()
+            if not alerts:
+                self.logger.info("🔕 No active custom alerts — skipping")
+                return empty
+
+            with open(scraped_file, "r", encoding="utf-8") as f:
+                scraped_data = json.load(f)
+
+            theater_slug_by_name = {
+                t["name"]: t["slug"]
+                for t in self.config.get("theaters", [])
+                if t.get("name") and t.get("slug")
+            }
+
+            matches = find_alert_matches(
+                scraped_data, alerts, theater_slug_by_name
+            )
+            if not matches:
+                self.logger.info("📱 No custom-alert matches this run")
+                return empty
+
+            notifier = TelegramNotifier()
+            stats = notifier.send_alert_notifications(matches, db_path=self.db_path)
+            self.logger.info("✅ Custom alert step completed")
+            return stats
+
+        except Exception as e:
+            self.logger.error(f"❌ Custom alert matching failed: {e}", exc_info=True)
+            return empty
+
     def _load_env_file(self):
         """Load environment variables from .env file"""
         env_file = Path(".env")
@@ -525,11 +572,17 @@ class AlertPipeline:
             except Exception:
                 pass
 
-            # Step 3: Notify (with deduplication)
+            # Step 3: Notify (global Q&A broadcast, with deduplication)
             stats = self.run_notifier(parsed_file)
             metrics["sent"] = stats.get("sent", 0)
             metrics["updated"] = stats.get("updated", 0)
             metrics["skipped"] = stats.get("skipped", 0)
+
+            # Step 4: Per-user custom alerts (additive to the global broadcast)
+            alert_stats = self.run_alert_matcher(scraped_file)
+            metrics["sent"] += alert_stats.get("sent", 0)
+            metrics["updated"] += alert_stats.get("updated", 0)
+            metrics["skipped"] += alert_stats.get("skipped", 0)
 
             # Calculate elapsed time
             elapsed = (datetime.now() - start_time).total_seconds()
@@ -602,7 +655,11 @@ class AlertPipeline:
         self._load_env_file()
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
         if bot_token:
-            bot = TelegramBot(bot_token=bot_token, db_path=self.db_path)
+            bot = TelegramBot(
+                bot_token=bot_token,
+                db_path=self.db_path,
+                theaters=self.config.get("theaters", []),
+            )
             bot.start()
         else:
             self.logger.warning(
@@ -698,8 +755,8 @@ def main():
     )
     parser.add_argument(
         "--db",
-        default=DEFAULT_DB_PATH,
-        help=f"Path to notification database (default: {DEFAULT_DB_PATH})",
+        required=True,
+        help="Path to the SQLite database (e.g. production.db or test.db)",
     )
     parser.add_argument(
         "--server",

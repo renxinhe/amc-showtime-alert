@@ -4,8 +4,9 @@
 output/
 logs/
 
-# Notification state database
-notifications.db
+# Databases
+production.db
+test.db
 
 # Python
 __pycache__/
