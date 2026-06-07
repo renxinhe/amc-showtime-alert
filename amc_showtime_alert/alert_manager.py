@@ -30,7 +30,8 @@ CREATE_ALERTS_TABLE = """
         pattern       TEXT    NOT NULL,
         is_regex      INTEGER NOT NULL DEFAULT 0,
         format_filter TEXT,
-        created_at    TIMESTAMP NOT NULL
+        created_at    TIMESTAMP NOT NULL,
+        deleted_at    TIMESTAMP             -- soft delete; NULL = active
     )
 """
 
@@ -60,7 +61,7 @@ class AlertManager:
         self._init_database()
 
     def _init_database(self):
-        """Create the alerts table if it doesn't exist"""
+        """Create the alerts table if it doesn't exist, and migrate older DBs."""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(CREATE_ALERTS_TABLE)
@@ -127,7 +128,8 @@ class AlertManager:
                 cursor.execute(
                     """
                     SELECT id, chat_id, theater_slug, pattern, is_regex, format_filter
-                    FROM alerts WHERE chat_id = ? ORDER BY created_at
+                    FROM alerts WHERE chat_id = ? AND deleted_at IS NULL
+                    ORDER BY created_at
                     """,
                     (chat_id,),
                 )
@@ -144,7 +146,7 @@ class AlertManager:
                 cursor.execute(
                     """
                     SELECT id, chat_id, theater_slug, pattern, is_regex, format_filter
-                    FROM alerts WHERE id = ? AND chat_id = ?
+                    FROM alerts WHERE id = ? AND chat_id = ? AND deleted_at IS NULL
                     """,
                     (alert_id, chat_id),
                 )
@@ -195,7 +197,7 @@ class AlertManager:
                 cursor = conn.cursor()
                 cursor.execute(
                     f"UPDATE alerts SET {', '.join(sets)} "
-                    "WHERE id = ? AND chat_id = ?",
+                    "WHERE id = ? AND chat_id = ? AND deleted_at IS NULL",
                     params,
                 )
                 conn.commit()
@@ -208,18 +210,23 @@ class AlertManager:
             return False
 
     def delete_alert(self, chat_id: int, alert_id: int) -> bool:
-        """Delete an alert owned by chat_id. Returns True if a row was removed."""
+        """
+        Soft-delete an active alert owned by chat_id (sets deleted_at), matching
+        seat_alerts. Returns True if an active row was deleted.
+        """
+        now = datetime.now().isoformat()
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
-                    "DELETE FROM alerts WHERE id = ? AND chat_id = ?",
-                    (alert_id, chat_id),
+                    "UPDATE alerts SET deleted_at = ? "
+                    "WHERE id = ? AND chat_id = ? AND deleted_at IS NULL",
+                    (now, alert_id, chat_id),
                 )
                 conn.commit()
                 deleted = cursor.rowcount > 0
                 if deleted:
-                    self.logger.info(f"Deleted alert #{alert_id} for {chat_id}")
+                    self.logger.info(f"Soft-deleted alert #{alert_id} for {chat_id}")
                 return deleted
         except sqlite3.Error as e:
             self.logger.error(f"Database error deleting alert {alert_id}: {e}")
@@ -241,7 +248,7 @@ class AlertManager:
                            a.is_regex, a.format_filter
                     FROM alerts a
                     JOIN users u ON u.chat_id = a.chat_id
-                    WHERE u.is_active = 1
+                    WHERE u.is_active = 1 AND a.deleted_at IS NULL
                     ORDER BY a.chat_id, a.id
                     """
                 )

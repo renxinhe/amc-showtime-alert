@@ -89,6 +89,26 @@ class TestAlertManager(unittest.TestCase):
         self.am.add_alert(333, "Avatar")
         self.assertEqual(len(self.am.get_active_alerts()), 1)
 
+    def test_delete_is_soft(self):
+        import sqlite3
+        aid = self.am.add_alert(111, "Dune")
+        self.assertTrue(self.am.delete_alert(111, aid))
+        self.assertEqual(self.am.list_alerts(111), [])     # hidden from reads
+        self.assertIsNone(self.am.get_alert(111, aid))
+        self.assertFalse(self.am.delete_alert(111, aid))   # already soft-deleted
+        self.assertFalse(self.am.edit_alert(111, aid, pattern="x"))  # can't edit
+        row = sqlite3.connect(self.db).execute(
+            "SELECT deleted_at FROM alerts WHERE id=?", (aid,)
+        ).fetchone()
+        self.assertIsNotNone(row[0])                       # row kept, marked deleted
+
+    def test_soft_deleted_excluded_from_active(self):
+        self.um.subscribe(111, first_name="A")
+        a1 = self.am.add_alert(111, "Dune")
+        self.am.add_alert(111, "Wicked")
+        self.am.delete_alert(111, a1)
+        self.assertEqual([a.pattern for a in self.am.get_active_alerts()], ["Wicked"])
+
 
 class TestAlertMatcher(unittest.TestCase):
     def setUp(self):

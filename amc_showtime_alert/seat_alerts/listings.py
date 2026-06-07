@@ -66,9 +66,13 @@ def fetch_showings(market: str, slug: str, date: str) -> List[Showing]:
     except requests.exceptions.RequestException as e:
         logger.warning(f"Listing fetch {slug} {date} failed: {e}")
         return []
+    return parse_showings(resp.text)
 
+
+def parse_showings(html: str) -> List[Showing]:
+    """Parse showings (with ids, formats, sold-out) from a listing page's HTML."""
     showings: List[Showing] = []
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(html, "html.parser")
     sections = soup.find_all("section", attrs={"aria-label": re.compile(r"Showtimes for")})
     for section in sections:
         label = section.get("aria-label", "")
@@ -100,6 +104,12 @@ def fetch_showings(market: str, slug: str, date: str) -> List[Showing]:
                         events.append(("fmt", fmt))
                 continue
             if not (isinstance(node, Tag) and node.get("role") == "group"):
+                continue
+            # AMC wraps all showtimes in an outer role="group" that contains the
+            # per-showtime role="group" cells. Only parse the leaf cells, or the
+            # wrapper would masquerade as a duplicate of the first showtime and
+            # steal its id.
+            if node.find("div", attrs={"role": "group"}) is not None:
                 continue
 
             item = _parse_showtime_cell(node)
