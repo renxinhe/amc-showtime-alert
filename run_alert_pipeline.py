@@ -5,20 +5,17 @@ Runs the complete pipeline: Scrape → Parse → Notify (with deduplication)
 Designed to be run frequently without spamming users
 
 Usage:
-    # Single run (scrape, parse, and send notifications once):
-    python run_alert_pipeline.py
-
     # Server mode (runs continuously on a timer set in config.json):
-    python run_alert_pipeline.py --server
+    python run_alert_pipeline.py --server --db production.db
+
+    # Test against a scratch database:
+    python run_alert_pipeline.py --server --db test.db
+
+    # Reuse the latest scraped JSON instead of scraping (parse/notify/match only):
+    python run_alert_pipeline.py --db test.db --reuse
 
     # Use a custom config file:
-    python run_alert_pipeline.py --config /path/to/config.json
-
-    # Use a custom notification database:
-    python run_alert_pipeline.py --db /path/to/notifications.db
-
-    # Server mode with custom config and database:
-    python run_alert_pipeline.py --server --config /path/to/config.json --db /path/to/notifications.db
+    python run_alert_pipeline.py --db production.db --config /path/to/config.json
 """
 
 import json
@@ -39,14 +36,14 @@ sys.path.insert(0, str(Path(__file__).parent / "amc_showtime_alert"))
 
 from amc_showtime_alert.amc_scraper import AMCShowtimeScraper
 from amc_showtime_alert.special_events_parser import find_special_events
-from amc_showtime_alert.telegram_notifier import TelegramNotifier
-from amc_showtime_alert.telegram_bot import TelegramBot
+from amc_showtime_alert.telegram import TelegramNotifier, TelegramBot
 from amc_showtime_alert.user_manager import UserManager
+from amc_showtime_alert.alert_manager import AlertManager
+from amc_showtime_alert.alert_matcher import find_alert_matches
 from amc_showtime_alert.schema import EventData, EventType
 
 # Path constants
 DEFAULT_CONFIG_PATH = "config.json"
-DEFAULT_DB_PATH = "notifications.db"
 OUTPUT_DIR = "output"
 
 # Filename pattern constants
@@ -64,7 +61,10 @@ class AlertPipeline:
     """Orchestrates the complete alert pipeline with deduplication"""
 
     def __init__(
-        self, config_path: str = DEFAULT_CONFIG_PATH, db_path: str = DEFAULT_DB_PATH
+        self,
+        db_path: str,
+        config_path: str = DEFAULT_CONFIG_PATH,
+        reuse_existing: bool = False,
     ):
         """
         Initialize the alert pipeline
@@ -72,9 +72,13 @@ class AlertPipeline:
         Args:
             config_path: Path to configuration file
             db_path: Path to notification state database
+            reuse_existing: If True, reuse the most recent scraped JSON in the
+                output dir instead of scraping AMC (useful for testing the
+                parse/notify/match stages without hitting the network).
         """
         self.config_path = config_path
         self.db_path = db_path
+        self.reuse_existing = reuse_existing
         self.output_dir = Path(OUTPUT_DIR)
         self.output_dir.mkdir(exist_ok=True)
 
@@ -278,6 +282,19 @@ class AlertPipeline:
             self.logger.error(f"❌ Scraping failed: {e}", exc_info=True)
             return None
 
+    def _latest_scraped_file(self) -> Optional[str]:
+        """
+        Return the newest raw scrape JSON in the output dir, or None.
+
+        Matches only timestamped scrape files (amc_showtimes_<digits>...json),
+        so parsed/special and ad-hoc files are ignored.
+        """
+        pattern = str(self.output_dir / "amc_showtimes_[0-9]*.json")
+        candidates = glob_module.glob(pattern)
+        if not candidates:
+            return None
+        return max(candidates, key=os.path.getmtime)
+
     def run_parser(self, scraped_file: str) -> Optional[str]:
         """
         Parse special events from scraped data
@@ -417,6 +434,58 @@ class AlertPipeline:
             self.logger.error(f"❌ Notification failed: {e}", exc_info=True)
             return {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
 
+    def run_alert_matcher(self, scraped_file: str) -> Dict[str, int]:
+        """
+        Match all scraped movies against users' custom alerts and notify each
+        user about their own matches (independent of the global Q&A broadcast).
+
+        Args:
+            scraped_file: Path to the raw scraped showtimes JSON file
+
+        Returns:
+            Dictionary with notification statistics
+        """
+        self.logger.info("\n" + "=" * LOG_SEPARATOR_WIDTH)
+        self.logger.info("STEP 4: MATCHING CUSTOM USER ALERTS")
+        self.logger.info("=" * LOG_SEPARATOR_WIDTH)
+
+        empty = {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
+        try:
+            bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+            if not bot_token:
+                self.logger.error("❌ Missing TELEGRAM_BOT_TOKEN in .env file")
+                return empty
+
+            alerts = AlertManager(self.db_path).get_active_alerts()
+            if not alerts:
+                self.logger.info("🔕 No active custom alerts — skipping")
+                return empty
+
+            with open(scraped_file, "r", encoding="utf-8") as f:
+                scraped_data = json.load(f)
+
+            theater_slug_by_name = {
+                t["name"]: t["slug"]
+                for t in self.config.get("theaters", [])
+                if t.get("name") and t.get("slug")
+            }
+
+            matches = find_alert_matches(
+                scraped_data, alerts, theater_slug_by_name
+            )
+            if not matches:
+                self.logger.info("📱 No custom-alert matches this run")
+                return empty
+
+            notifier = TelegramNotifier()
+            stats = notifier.send_alert_notifications(matches, db_path=self.db_path)
+            self.logger.info("✅ Custom alert step completed")
+            return stats
+
+        except Exception as e:
+            self.logger.error(f"❌ Custom alert matching failed: {e}", exc_info=True)
+            return empty
+
     def _load_env_file(self):
         """Load environment variables from .env file"""
         env_file = Path(".env")
@@ -478,8 +547,24 @@ class AlertPipeline:
             # Initialize metrics
             metrics["theaters_total"] = len(self.config.get("theaters", []))
 
-            # Step 1: Scrape
-            scraped_file = self.run_scraper()
+            # Step 1: Scrape (or reuse the latest existing scrape)
+            if self.reuse_existing:
+                scraped_file = self._latest_scraped_file()
+                if scraped_file:
+                    self.logger.info("\n" + "=" * LOG_SEPARATOR_WIDTH)
+                    self.logger.info(
+                        f"♻️  STEP 1: REUSING EXISTING SCRAPE (skip scraping)\n"
+                        f"    {scraped_file}"
+                    )
+                    self.logger.info("=" * LOG_SEPARATOR_WIDTH)
+                else:
+                    self.logger.warning(
+                        "♻️  Reuse mode: no existing scrape found — scraping fresh"
+                    )
+                    scraped_file = self.run_scraper()
+            else:
+                scraped_file = self.run_scraper()
+
             if not scraped_file:
                 self.logger.error("Pipeline failed at scraping step")
                 error_msg = "Scraping failed"
@@ -525,11 +610,17 @@ class AlertPipeline:
             except Exception:
                 pass
 
-            # Step 3: Notify (with deduplication)
+            # Step 3: Notify (global Q&A broadcast, with deduplication)
             stats = self.run_notifier(parsed_file)
             metrics["sent"] = stats.get("sent", 0)
             metrics["updated"] = stats.get("updated", 0)
             metrics["skipped"] = stats.get("skipped", 0)
+
+            # Step 4: Per-user custom alerts (additive to the global broadcast)
+            alert_stats = self.run_alert_matcher(scraped_file)
+            metrics["sent"] += alert_stats.get("sent", 0)
+            metrics["updated"] += alert_stats.get("updated", 0)
+            metrics["skipped"] += alert_stats.get("skipped", 0)
 
             # Calculate elapsed time
             elapsed = (datetime.now() - start_time).total_seconds()
@@ -602,7 +693,11 @@ class AlertPipeline:
         self._load_env_file()
         bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
         if bot_token:
-            bot = TelegramBot(bot_token=bot_token, db_path=self.db_path)
+            bot = TelegramBot(
+                bot_token=bot_token,
+                db_path=self.db_path,
+                theaters=self.config.get("theaters", []),
+            )
             bot.start()
         else:
             self.logger.warning(
@@ -698,19 +793,27 @@ def main():
     )
     parser.add_argument(
         "--db",
-        default=DEFAULT_DB_PATH,
-        help=f"Path to notification database (default: {DEFAULT_DB_PATH})",
+        required=True,
+        help="Path to the SQLite database (e.g. production.db or test.db)",
     )
     parser.add_argument(
         "--server",
         action="store_true",
         help="Run in server mode with scheduled execution (interval from config)",
     )
+    parser.add_argument(
+        "--reuse",
+        action="store_true",
+        help="Reuse the latest scraped JSON in the output dir instead of "
+        "scraping AMC (parse/notify/match still run; useful for testing)",
+    )
 
     args = parser.parse_args()
 
     # Initialize pipeline
-    pipeline = AlertPipeline(config_path=args.config, db_path=args.db)
+    pipeline = AlertPipeline(
+        config_path=args.config, db_path=args.db, reuse_existing=args.reuse
+    )
 
     # Run in appropriate mode
     if args.server:

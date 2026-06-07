@@ -67,7 +67,7 @@ Before installing the service, verify the script works:
 
 ```bash
 cd ~/amc_showtime_alert
-python3 run_alert_pipeline.py --server
+python3 run_alert_pipeline.py --server --db production.db
 ```
 
 Press Ctrl+C to stop. If it works, proceed to install the service.
@@ -322,7 +322,7 @@ cd ~/amc_showtime_alert
 3. Verify Python can run the script:
    ```bash
    cd ~/amc_showtime_alert
-   python3 run_alert_pipeline.py --server
+   python3 run_alert_pipeline.py --server --db production.db
    ```
 
 4. Check file permissions:
@@ -503,5 +503,5 @@ If you encounter issues:
 1. Check service status: `sudo systemctl status alert-pipeline.service`
 2. Check recent logs: `sudo journalctl -u alert-pipeline.service -n 100`
 3. Check error logs: `sudo journalctl -u alert-pipeline.service -p err`
-4. Verify script works manually: `python3 ~/amc_showtime_alert/run_alert_pipeline.py --server`
+4. Verify script works manually: `python3 ~/amc_showtime_alert/run_alert_pipeline.py --server --db production.db`
 5. Check Python dependencies: `pip3 list | grep -E "requests|beautifulsoup4|schedule"`

@@ -14,11 +14,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import asdict
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
-from .schema import DailyShowtimes, Movie
+from .schema import DailyShowtimes, Movie, Showtime
+from .movie_format_utils import detect_format_label, higher_priority_format
 
 
 class AMCShowtimeScraper:
@@ -209,12 +210,15 @@ class AMCShowtimeScraper:
 
     def _parse_movies(
         self, html_data: str
-    ) -> List[Tuple[str, str, Optional[int], str, List[str]]]:
+    ) -> List[Tuple[str, str, Optional[int], str, List[str], List[Showtime]]]:
         """
         Parse movie information from HTML using BeautifulSoup
 
         Returns:
-            List of tuples: (name, slug, runtime, rating, showtimes)
+            List of tuples:
+                (name, slug, runtime, rating, showtimes, showtime_details)
+            where showtimes is the sorted/deduped list of time strings and
+            showtime_details carries the premium format(s) for each time.
         """
         movies = []
 
@@ -274,41 +278,42 @@ class AMCShowtimeScraper:
                         if rating_match:
                             rating = rating_match.group(1)
 
-                    # Extract showtimes from links
-                    showtime_links = section.find_all(
-                        "a", href=re.compile(r"/showtimes/")
-                    )
-                    showtimes = []
+                    # Extract showtimes, tagging each with the premium format of
+                    # its experience block. AMC renders each experience as a
+                    # primary heading followed by ":" and a tagline, then the
+                    # showtime links; a block may carry secondary sub-labels
+                    # before its times (e.g. "IMAX 70mm" then "IMAX at AMC" then
+                    # "70mm"). We first flatten the section into an ordered
+                    # sequence of just the relevant tokens (format labels, the
+                    # ":" delimiter, and showtimes), then resolve each block's
+                    # format from that sequence.
+                    seq = self._extract_format_sequence(section)
+                    formats_by_time = self._resolve_showtime_formats(seq)
 
-                    for link in showtime_links:
-                        time_text = link.get_text(strip=True)
-
-                        # Remove discount labels like "20% OFF", "UP TO 15% OFF"
-                        time_text = re.sub(
-                            r"\s*(UP\s+TO\s+)?\d+%\s+OFF\s*",
-                            "",
-                            time_text,
-                            flags=re.IGNORECASE,
-                        )
-
-                        # Parse time (e.g., "1:00 pm", "11:30 am")
-                        time_match = re.match(
-                            r"(\d{1,2}):(\d{2})\s*(am|pm)", time_text, re.IGNORECASE
-                        )
-                        if time_match:
-                            hour = time_match.group(1)
-                            minute = time_match.group(2)
-                            period = time_match.group(3).upper()
-                            formatted_time = f"{hour}:{minute} {period}"
-                            showtimes.append(formatted_time)
-
-                    # Remove duplicates and sort
+                    # Sorted, deduped time strings (unchanged shape for existing
+                    # consumers) plus parallel per-time format details.
                     showtimes = sorted(
-                        list(set(showtimes)), key=lambda t: self._time_to_minutes(t)
+                        formats_by_time.keys(), key=lambda t: self._time_to_minutes(t)
                     )
+                    showtime_details = [
+                        Showtime(
+                            time=t,
+                            formats=sorted(formats_by_time[t]),
+                        )
+                        for t in showtimes
+                    ]
 
                     if showtimes:  # Only add movies with showtimes
-                        movies.append((movie_name, slug, runtime, rating, showtimes))
+                        movies.append(
+                            (
+                                movie_name,
+                                slug,
+                                runtime,
+                                rating,
+                                showtimes,
+                                showtime_details,
+                            )
+                        )
 
                 except Exception as e:
                     self.logger.warning(f"Error parsing movie section: {e}")
@@ -320,6 +325,85 @@ class AMCShowtimeScraper:
 
         self.logger.info(f"Parsed {len(movies)} movies with showtimes")
         return movies
+
+    def _extract_format_sequence(self, section) -> List[Tuple[str, Optional[str]]]:
+        """
+        Flatten a movie <section> into an ordered list of the tokens relevant to
+        format resolution. Each item is one of:
+            ("fmt", token)   a recognized premium-format label
+            ("colon", None)  the ":" that separates a primary heading from its tagline
+            ("time", "7:30 PM")  a bookable showtime link
+        Everything else (taglines, amenities, badges) is dropped.
+        """
+        seq: List[Tuple[str, Optional[str]]] = []
+        for node in section.descendants:
+            if isinstance(node, NavigableString):
+                text = str(node).strip()
+                if not text:
+                    continue
+                if text == ":":
+                    seq.append(("colon", None))
+                else:
+                    label = detect_format_label(text)
+                    if label:
+                        seq.append(("fmt", label))
+                continue
+
+            if node.name != "a":
+                continue
+            if "/showtimes/" not in (node.get("href") or ""):
+                continue
+
+            time_text = node.get_text(strip=True)
+            # Remove discount labels like "20% OFF", "UP TO 15% OFF"
+            time_text = re.sub(
+                r"\s*(UP\s+TO\s+)?\d+%\s+OFF\s*",
+                "",
+                time_text,
+                flags=re.IGNORECASE,
+            )
+            time_match = re.match(
+                r"(\d{1,2}):(\d{2})\s*(am|pm)", time_text, re.IGNORECASE
+            )
+            if time_match:
+                hour, minute, period = time_match.groups()
+                seq.append(("time", f"{hour}:{minute} {period.upper()}"))
+
+        return seq
+
+    def _resolve_showtime_formats(self, seq) -> Dict[str, set]:
+        """
+        Resolve each showtime's premium format(s) from the flattened sequence.
+
+        A format label that is immediately followed by ":" is a block's primary
+        heading and starts a new experience block. A label that is NOT followed by
+        ":" either starts a new block (when the previous block already produced
+        showtimes, e.g. a lone "Laser at AMC" before its times) or refines the
+        current block as a secondary sub-label, in which case the higher-priority
+        format is kept (so "IMAX 70mm" + "70mm" resolves to "imax").
+        """
+        formats_by_time: Dict[str, set] = {}
+        current_format: Optional[str] = None
+        emitted_since_label = False  # has a showtime been seen for current_format?
+
+        for i, (kind, value) in enumerate(seq):
+            if kind == "fmt":
+                followed_by_colon = i + 1 < len(seq) and seq[i + 1][0] == "colon"
+                if followed_by_colon:
+                    current_format = value
+                    emitted_since_label = False
+                elif current_format is None or emitted_since_label:
+                    current_format = value
+                    emitted_since_label = False
+                else:
+                    current_format = higher_priority_format(current_format, value)
+            elif kind == "time":
+                fmts = formats_by_time.setdefault(value, set())
+                if current_format:
+                    fmts.add(current_format)
+                emitted_since_label = True
+
+        return formats_by_time
 
     def _is_theater_name(self, name: str) -> bool:
         """Check if a name is likely a theater name rather than a movie"""
@@ -419,13 +503,14 @@ class AMCShowtimeScraper:
 
             # Create Movie objects from parsed data
             movies = []
-            for name, slug, runtime, rating, showtimes in movie_data:
+            for name, slug, runtime, rating, showtimes, showtime_details in movie_data:
                 movie = Movie(
                     name=name,
                     slug=slug,
                     runtime=runtime,
                     rating=rating,
                     showtimes=showtimes,
+                    showtime_details=showtime_details,
                 )
 
                 if self._validate_movie(movie):

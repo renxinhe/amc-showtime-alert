@@ -11,8 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-DEFAULT_DB_PATH = "notifications.db"
-
 CREATE_USERS_TABLE = """
     CREATE TABLE IF NOT EXISTS users (
         chat_id     INTEGER PRIMARY KEY,
@@ -30,7 +28,7 @@ CREATE_USERS_TABLE = """
 class UserManager:
     """Manages Telegram subscribers in the shared SQLite database"""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str):
         self.db_path = Path(db_path)
         self.logger = logging.getLogger("UserManager")
         self._init_database()

@@ -2,7 +2,7 @@
 
 [![AMC Showtime Alert](https://healthchecks.io/b/2/cd80e297-2c8d-46ba-86f9-5469a94da7f5.svg)](https://healthchecks.io)
 
-Monitors AMC theaters for special events (Q&As, special screenings) and sends Telegram notifications. Runs as a systemd service on a Raspberry Pi.
+Monitors AMC theaters for special events (Q&As, special screenings) and sends Telegram notifications. Users can also create their own **custom alerts** for any movie, theater, and format (IMAX, Dolby, 70mm, …). Runs as a systemd service on a Raspberry Pi.
 
 ## Setup
 
@@ -19,16 +19,42 @@ HEALTHCHECKS_PING_URL="https://hc-ping.com/your-uuid-here"  # optional
 
 Users subscribe by sending `/start` to the Telegram bot.
 
+## Bot commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Subscribe |
+| `/stop` | Unsubscribe |
+| `/addalert <keyword> [theater:<slug>] [format:<imax\|dolby\|70mm\|…>] [regex]` | Create a custom alert |
+| `/listalerts` | List your alerts and their ids |
+| `/editalert <id> [keyword] [theater:…] [format:…] [regex\|noregex]` | Edit an alert |
+| `/delalert <id>` | Delete an alert |
+| `/theaters` | List available theater slugs |
+| `/help` | Show all commands |
+
+**Custom alert examples:**
+
+```
+/addalert Oppenheimer format:imax
+/addalert "Taylor Swift" theater:amc-lincoln-square-13
+/addalert ^Dune.*Part regex format:imax
+```
+
+- The first non-flag word(s) are the title to match; quote a phrase to include spaces.
+- Omit `theater:` to match **all** theaters; use `theater:all` to clear it on edit.
+- `keyword` matches titles case-insensitively; add `regex` to treat it as a regular expression.
+- A custom alert notifies **only its owner**, once per match, and again only when its showtimes change. This is independent of the global Q&A broadcast that every subscriber receives.
+
 ## Running
 
-**Server mode** (recommended — runs continuously on a timer):
+**Server mode**:
 ```bash
-python run_alert_pipeline.py --server
+python run_alert_pipeline.py --server --db production.db
 ```
 
 **Single run** (for testing or cron):
 ```bash
-python run_alert_pipeline.py
+python run_alert_pipeline.py --db test.db
 ```
 
 See [SERVICE_MANAGEMENT.md](SERVICE_MANAGEMENT.md) for systemd setup.
@@ -57,7 +83,7 @@ Each run appends a line to `logs/status_YYYY-WW.log`:
 
 ## Pipeline
 
-Each run: **Scrape** → **Parse** → **Notify** (with deduplication via SQLite)
+Each run: **Scrape** → **Parse** → **Notify (global Q&A)** → **Match custom alerts** (deduplication via SQLite)
 
 - New events → sends notification, records in DB
 - Same event, same showtimes → skipped
