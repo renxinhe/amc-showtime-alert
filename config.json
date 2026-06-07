@@ -44,6 +44,7 @@
   "server": {
     "interval_minutes": 20,
     "output_retention_days": 7,
-    "logs_retention_days": 90
+    "logs_retention_days": 90,
+    "seat_poll_delay_seconds": 2.0
   }
 }

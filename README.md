@@ -81,6 +81,7 @@ Edit `config.json` to configure theaters, scraping behavior, and intervals:
 | `server.output_retention_days` | `7` | Days to keep output JSON files |
 | `server.logs_retention_days` | `90` | Days to keep status logs |
 | `telegram.retention_days` | `30` | Days to keep notification history |
+| `server.seat_poll_delay_seconds` | `2.0` | Delay (jittered) between seat-map fetches to avoid AMC rate limits |
 
 ## Status Logs
 

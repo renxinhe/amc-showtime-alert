@@ -13,16 +13,18 @@ unreachable showing is simply retried next cycle.
 """
 
 import logging
+import random
 import time
 from typing import Callable, Dict, List, Optional
 
 from .manager import SeatAlert, SeatAlertManager
-from .seat_map import SeatLayout, fetch_seat_layout, good_available_seats
+from .seat_map import RateLimited, SeatLayout, fetch_seat_layout, good_available_seats
 
 logger = logging.getLogger("SeatAlertPoller")
 
-# Seconds between seat-map fetches, to stay under AMC's rate limit.
-FETCH_DELAY_SECONDS = 1.5
+# Base seconds between seat-map fetches, to stay under AMC's rate limit. The
+# actual gap is jittered up to +50% so we don't hammer on a fixed cadence.
+FETCH_DELAY_SECONDS = 2.0
 
 # Cap how many seat names we list in one message.
 MAX_SEATS_SHOWN = 10
@@ -74,18 +76,27 @@ def poll_seat_alerts(
     given, fires are delivered as a rendered seat-map image with the text as the
     caption (falling back to text on any render error). `fetch(showtime_id)` is
     injectable for testing.
+
+    Fetches are spaced by `delay` seconds (jittered) to stay under AMC's rate
+    limit; if AMC starts throttling (429 / virtual queue) the cycle stops early
+    rather than hammering, and resumes next cycle.
     """
     fetch = fetch or fetch_seat_layout
     mgr = SeatAlertManager(db_path)
     alerts = mgr.get_pollable()
-    stats = {"checked": 0, "notified": 0, "unreachable": 0}
+    stats = {"checked": 0, "notified": 0, "unreachable": 0, "rate_limited": 0}
 
     for i, alert in enumerate(alerts):
-        layout = fetch(alert.showtime_id)
+        try:
+            layout = fetch(alert.showtime_id)
+        except RateLimited as e:
+            logger.warning(f"Rate limited by AMC — stopping seat poll early ({e})")
+            stats["rate_limited"] = 1
+            break
         stats["checked"] += 1
         if layout is None:
             stats["unreachable"] += 1
-            continue  # transient (queue/429/format change) — retry next cycle
+            continue  # transient (sold out / format change) — retry next cycle
 
         good_names = sorted(s["name"] for s in good_available_seats(layout))
         previously = set(alert.last_good_seats)
@@ -98,6 +109,6 @@ def poll_seat_alerts(
         mgr.update_last_good_seats(alert.id, good_names)
 
         if delay and i < len(alerts) - 1:
-            sleep(delay)
+            sleep(delay * random.uniform(1.0, 1.5))  # jittered spacing
 
     return stats
