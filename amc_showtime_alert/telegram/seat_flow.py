@@ -18,6 +18,7 @@ from datetime import date
 from ..movie_format_utils import format_display
 from ..seat_alerts.listings import fetch_showings
 from ..seat_alerts.manager import SeatAlertManager
+from . import messages as msg
 from .formatting import html_escape
 
 logger = logging.getLogger("SeatAlertFlow")
@@ -38,34 +39,23 @@ class SeatAlertFlowMixin:
             return
         # Guided flow: start at the theater picker.
         if not self.theaters:
-            self._api.send_message(chat_id, "No theaters are configured.")
+            self._api.send_message(chat_id, msg.SEAT_NO_THEATERS)
             return
         self._conversations[chat_id] = {"kind": "seat", "step": "theater"}
         mid = self._api.send_picker(
-            chat_id, "🎟 <b>New seat alert</b>\n\nPick a theater:",
-            self._seat_theater_kb(),
+            chat_id, msg.SEAT_NEW_PROMPT, self._seat_theater_kb(),
         )
         self._conversations[chat_id]["message_id"] = mid
 
     def _addseatalert_by_id(self, chat_id: int, arg: str):
         if not arg.isdigit():
-            self._api.send_message(
-                chat_id,
-                "Send just the numeric showtime id, e.g. "
-                "<code>/addseatalert 143838750</code>, or use /addseatalert to "
-                "pick from the menu.",
-                parse_mode="HTML",
-            )
+            self._api.send_message(chat_id, msg.SEAT_ID_USAGE, parse_mode="HTML")
             return
         from ..seat_alerts.seat_map import fetch_showtime_meta
 
         meta = fetch_showtime_meta(arg)
         if not meta:
-            self._api.send_message(
-                chat_id,
-                "Couldn't read that showtime's details. Use /addseatalert to "
-                "pick it from the menu instead.",
-            )
+            self._api.send_message(chat_id, msg.SEAT_ID_UNREADABLE)
             return
         self._create_seat_alert(
             chat_id, showtime_id=arg, theater_slug=None,
@@ -76,22 +66,20 @@ class SeatAlertFlowMixin:
     def _handle_listseatalerts(self, chat_id: int):
         alerts = SeatAlertManager(self.db_path).list_active(chat_id)
         if not alerts:
-            self._api.send_message(
-                chat_id, "You have no seat alerts. Create one with /addseatalert."
-            )
+            self._api.send_message(chat_id, msg.SEAT_LIST_EMPTY)
             return
-        lines = ["🎟 <b>Your seat alerts</b>"]
+        lines = [msg.SEAT_LIST_HEADER]
         for a in alerts:
             theater = self._name_by_slug.get(a.theater_slug, "") if a.theater_slug else ""
             bits = [b for b in (a.movie_name, theater, a.showtime_label) if b]
             lines.append("• " + html_escape(" · ".join(bits)))
-        lines.append("\nDelete one with /delseatalert.")
+        lines.append(msg.SEAT_LIST_FOOTER)
         self._api.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
 
     def _handle_delseatalert(self, chat_id: int):
         alerts = SeatAlertManager(self.db_path).list_active(chat_id)
         if not alerts:
-            self._api.send_message(chat_id, "You have no seat alerts to delete.")
+            self._api.send_message(chat_id, msg.SEAT_DELETE_EMPTY)
             return
         rows = []
         for a in alerts:
@@ -101,8 +89,7 @@ class SeatAlertFlowMixin:
             rows.append([{"text": f"🗑 {label}"[:60], "callback_data": f"sad:{a.id}"}])
         rows.append([{"text": "✖️ Cancel", "callback_data": "sad:x"}])
         self._api.send_message(
-            chat_id, "🗑 Which seat alert should I delete?",
-            reply_markup={"inline_keyboard": rows},
+            chat_id, msg.SEAT_DELETE_PROMPT, reply_markup={"inline_keyboard": rows},
         )
 
     # ------------------------------------------------------------------ #
@@ -111,14 +98,14 @@ class SeatAlertFlowMixin:
 
     def _handle_seat_delete_callback(self, chat_id, message_id, token):
         if token == "x":
-            self._api.edit_message(chat_id, message_id, "Okay — nothing deleted.")
+            self._api.edit_message(chat_id, message_id, msg.SEAT_DELETE_CANCELLED)
             return
         if not token.isdigit():
             return
         if SeatAlertManager(self.db_path).soft_delete(chat_id, int(token)):
-            self._api.edit_message(chat_id, message_id, "🗑 Seat alert deleted.")
+            self._api.edit_message(chat_id, message_id, msg.SEAT_DELETED)
         else:
-            self._api.edit_message(chat_id, message_id, "That seat alert was already gone.")
+            self._api.edit_message(chat_id, message_id, msg.SEAT_DELETE_GONE)
 
     def _handle_seat_callback(self, chat_id, message_id, data):
         """Handle sa:* callbacks for the create flow."""
@@ -129,7 +116,7 @@ class SeatAlertFlowMixin:
 
         if action == "x":
             self._conversations.pop(chat_id, None)
-            self._api.edit_message(chat_id, message_id, "✖️ Cancelled.")
+            self._api.edit_message(chat_id, message_id, msg.SEAT_FLOW_CANCELLED)
             return
         if action == "back":
             self._seat_back(chat_id, message_id, conv)
@@ -138,17 +125,18 @@ class SeatAlertFlowMixin:
         kind, _, value = action.partition(":")
         if kind == "th":
             conv.update(step="month", theater_slug=value)
-            self._api.edit_message(chat_id, message_id, "Pick a month:", self._seat_month_kb())
+            self._api.edit_message(chat_id, message_id, msg.SEAT_PICK_MONTH, self._seat_month_kb())
         elif kind == "m":
             conv.update(step="day", year_month=value)
-            self._api.edit_message(chat_id, message_id, "Pick a date:", self._seat_day_kb(value))
+            self._api.edit_message(chat_id, message_id, msg.SEAT_PICK_DATE, self._seat_day_kb(value))
         elif kind == "d":
             conv.update(step="movie", date=value)
             self._render_movie_step(chat_id, message_id, conv)
         elif kind == "mv":
             conv.update(step="showtime", movie=conv["movies"][int(value)])
             self._api.edit_message(
-                chat_id, message_id, f"Showtimes for <b>{conv['movie']}</b>:",
+                chat_id, message_id,
+                msg.SEAT_SHOWTIME_PROMPT.format(movie=conv["movie"]),
                 self._seat_showtime_kb(conv),
             )
         elif kind == "st":
@@ -158,14 +146,14 @@ class SeatAlertFlowMixin:
         step = conv.get("step")
         if step == "month":
             conv["step"] = "theater"
-            self._api.edit_message(chat_id, message_id, "Pick a theater:", self._seat_theater_kb())
+            self._api.edit_message(chat_id, message_id, msg.SEAT_PICK_THEATER, self._seat_theater_kb())
         elif step == "day":
             conv["step"] = "month"
-            self._api.edit_message(chat_id, message_id, "Pick a month:", self._seat_month_kb())
+            self._api.edit_message(chat_id, message_id, msg.SEAT_PICK_MONTH, self._seat_month_kb())
         elif step == "movie":
             conv["step"] = "day"
             self._api.edit_message(
-                chat_id, message_id, "Pick a date:", self._seat_day_kb(conv["year_month"])
+                chat_id, message_id, msg.SEAT_PICK_DATE, self._seat_day_kb(conv["year_month"])
             )
         elif step == "showtime":
             conv["step"] = "movie"
@@ -227,13 +215,13 @@ class SeatAlertFlowMixin:
         if not movies:
             self._api.edit_message(
                 chat_id, message_id,
-                f"No showings found at that theater on {conv['date']}.",
+                msg.SEAT_NO_SHOWINGS.format(date=conv["date"]),
                 {"inline_keyboard": [self._nav_row()]},
             )
             return
         rows = [[{"text": mv[:55], "callback_data": f"sa:mv:{i}"}] for i, mv in enumerate(movies)]
         rows.append(self._nav_row())
-        self._api.edit_message(chat_id, message_id, "Pick a movie:", {"inline_keyboard": rows})
+        self._api.edit_message(chat_id, message_id, msg.SEAT_PICK_MOVIE, {"inline_keyboard": rows})
 
     def _seat_showtime_kb(self, conv):
         rows = []
@@ -268,12 +256,11 @@ class SeatAlertFlowMixin:
             theater_slug=theater_slug, movie_name=movie_name, showtime_label=showtime_label,
         )
         if aid is None:
-            text = "❌ Could not create the seat alert. Try again."
+            text = msg.SEAT_CREATE_FAILED
         else:
             theater = self._name_by_slug.get(theater_slug, "") if theater_slug else ""
             parts = [p for p in [movie_name, theater, showtime_label] if p]
-            text = ("🎟 <b>Seat alert created</b>\n" + " · ".join(parts)
-                    + "\n\nI'll message you when a good seat (centred, back half) opens up.")
+            text = msg.SEAT_CREATED_HEADER + "\n" + " · ".join(parts) + msg.SEAT_CREATED_FOOTER
         if message_id is not None:
             self._api.edit_message(chat_id, message_id, text)
         else:

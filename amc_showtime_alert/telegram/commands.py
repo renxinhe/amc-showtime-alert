@@ -15,12 +15,7 @@ from ..notification_state import UserNotificationState
 from ..user_manager import UserManager
 from ..movie_format_utils import KNOWN_FORMAT_TOKENS
 from . import formatting, keyboards
-from .messages import (
-    ALREADY_SUBSCRIBED_MESSAGE,
-    NOT_SUBSCRIBED_MESSAGE,
-    UNSUBSCRIBE_MESSAGE,
-    WELCOME_MESSAGE,
-)
+from . import messages as msg
 
 # Sentinel meaning "clear this filter" (e.g. theater:all) vs "not provided".
 _CLEAR = object()
@@ -44,9 +39,9 @@ class CommandsMixin:
 
     def _handle_cancel(self, chat_id: int):
         if self._conversations.pop(chat_id, None) is not None:
-            self._api.send_message(chat_id, "✖️ Cancelled. Nothing was created.")
+            self._api.send_message(chat_id, msg.CANCELLED_NOTHING)
         else:
-            self._api.send_message(chat_id, "Nothing to cancel.")
+            self._api.send_message(chat_id, msg.NOTHING_TO_CANCEL)
 
     def _handle_start(self, chat_id: int, user: dict):
         um = UserManager(self.db_path)
@@ -58,9 +53,9 @@ class CommandsMixin:
         )
         first_name = user.get("first_name") or "there"
         if is_new_or_resubscribed:
-            self._api.send_message(chat_id, WELCOME_MESSAGE.format(first_name=first_name))
+            self._api.send_message(chat_id, msg.WELCOME_MESSAGE.format(first_name=first_name))
         else:
-            self._api.send_message(chat_id, ALREADY_SUBSCRIBED_MESSAGE)
+            self._api.send_message(chat_id, msg.ALREADY_SUBSCRIBED_MESSAGE)
 
     def _handle_stop(self, chat_id: int, user: dict):
         um = UserManager(self.db_path)
@@ -68,10 +63,10 @@ class CommandsMixin:
         first_name = user.get("first_name") or "there"
         if was_active:
             self._api.send_message(
-                chat_id, UNSUBSCRIBE_MESSAGE.format(first_name=first_name)
+                chat_id, msg.UNSUBSCRIBE_MESSAGE.format(first_name=first_name)
             )
         else:
-            self._api.send_message(chat_id, NOT_SUBSCRIBED_MESSAGE)
+            self._api.send_message(chat_id, msg.NOT_SUBSCRIBED_MESSAGE)
 
     # -- argument parsing ------------------------------------------------- #
 
@@ -105,12 +100,11 @@ class CommandsMixin:
         if len(candidates) == 1:
             return candidates[0], None
         if len(candidates) > 1:
-            return None, (
-                f"Ambiguous theater '{value}'. Matches: "
-                f"{', '.join(sorted(candidates))}"
+            return None, msg.THEATER_AMBIGUOUS.format(
+                value=value, matches=", ".join(sorted(candidates))
             )
         valid = ", ".join(sorted(self._slugs)) or "(none configured)"
-        return None, f"Unknown theater '{value}'. Valid slugs: {valid}"
+        return None, msg.THEATER_UNKNOWN.format(value=value, slugs=valid)
 
     def _resolve_format(self, value: str):
         """Resolve a format: argument to a token, _CLEAR, or (None, error)."""
@@ -120,8 +114,8 @@ class CommandsMixin:
         v = _FORMAT_ALIASES.get(v, v)
         if v in KNOWN_FORMAT_TOKENS:
             return v, None
-        return None, (
-            f"Unknown format '{value}'. Valid: {', '.join(KNOWN_FORMAT_TOKENS)}"
+        return None, msg.FORMAT_UNKNOWN.format(
+            value=value, tokens=", ".join(KNOWN_FORMAT_TOKENS)
         )
 
     def _parse_alert_args(self, args: str):
@@ -135,7 +129,7 @@ class CommandsMixin:
         try:
             tokens = self._tokenize(args)
         except ValueError:
-            return {}, ["Could not parse arguments — check your quotes."]
+            return {}, [msg.ARGS_PARSE_ERROR]
 
         result: dict = {}
         errors: List[str] = []
@@ -181,11 +175,7 @@ class CommandsMixin:
 
         pattern = parsed.get("pattern")
         if not pattern:
-            self._api.send_message(
-                chat_id,
-                "Please provide a keyword or phrase to match.\n"
-                "Example: /addalert Oppenheimer format:imax",
-            )
+            self._api.send_message(chat_id, msg.ADDALERT_NEED_PATTERN)
             return
 
         is_regex = parsed.get("is_regex", False)
@@ -208,44 +198,35 @@ class CommandsMixin:
             format_filter=fmt,
         )
         if alert_id is None:
-            self._api.send_message(chat_id, "❌ Could not create alert. Try again.")
+            self._api.send_message(chat_id, msg.ADDALERT_CREATE_FAILED)
             return
 
         alert = am.get_alert(chat_id, alert_id)
-        msg = "✅ <b>Alert created</b>\n" + formatting.format_alert_card(
+        text = msg.ALERT_CREATED_HEADER + "\n" + formatting.format_alert_card(
             alert, self._name_by_slug
         )
         # Remind the user that alerts only fire while subscribed.
         if chat_id not in set(UserManager(self.db_path).get_active_subscribers()):
-            msg += "\n\n⚠️ You're not subscribed — send /start to receive alerts."
-        self._api.send_message(chat_id, msg, parse_mode="HTML")
+            text += msg.NOT_SUBSCRIBED_SUFFIX
+        self._api.send_message(chat_id, text, parse_mode="HTML")
 
     def _handle_listalerts(self, chat_id: int):
         am = AlertManager(self.db_path)
         alerts = am.list_alerts(chat_id)
         if not alerts:
-            self._api.send_message(
-                chat_id,
-                "You have no custom alerts yet.\n"
-                "Create one with /addalert — see /help for examples.",
-            )
+            self._api.send_message(chat_id, msg.LISTALERTS_EMPTY)
             return
-        msg = (
-            "🔔 <b>Your alerts</b>\n"
+        text = (
+            msg.LISTALERTS_HEADER + "\n"
             + formatting.format_alerts_table(alerts, self._name_by_slug)
-            + "\n\nEdit: <code>/editalert &lt;id&gt; …</code>"
-            + "   Delete: <code>/delalert &lt;id&gt;</code>"
+            + msg.LISTALERTS_FOOTER
         )
-        self._api.send_message(chat_id, msg, parse_mode="HTML")
+        self._api.send_message(chat_id, text, parse_mode="HTML")
 
     def _handle_editalert(self, chat_id: int, args: str):
         parts = args.strip().split(maxsplit=1)
         if not parts or not parts[0].lstrip("#").isdigit():
-            self._api.send_message(
-                chat_id,
-                "Usage: /editalert <id> [keyword] [theater:…] [format:…] "
-                "[regex|noregex]\nSee /listalerts for ids.",
-            )
+            self._api.send_message(chat_id, msg.EDITALERT_USAGE)
             return
 
         alert_id = int(parts[0].lstrip("#"))
@@ -254,17 +235,11 @@ class CommandsMixin:
         am = AlertManager(self.db_path)
         existing = am.get_alert(chat_id, alert_id)
         if existing is None:
-            self._api.send_message(
-                chat_id, f"No alert #{alert_id} found. Use /listalerts."
-            )
+            self._api.send_message(chat_id, msg.ALERT_NOT_FOUND.format(id=alert_id))
             return
 
         if not rest.strip():
-            self._api.send_message(
-                chat_id,
-                "Nothing to change. Provide a new keyword and/or "
-                "theater:… format:… regex|noregex.",
-            )
+            self._api.send_message(chat_id, msg.EDITALERT_NOTHING)
             return
 
         parsed, errors = self._parse_alert_args(rest)
@@ -287,7 +262,7 @@ class CommandsMixin:
             )
 
         if not kwargs:
-            self._api.send_message(chat_id, "Nothing to change.")
+            self._api.send_message(chat_id, msg.EDITALERT_NOTHING_SHORT)
             return
 
         final_pattern = kwargs.get("pattern", existing.pattern)
@@ -304,7 +279,7 @@ class CommandsMixin:
         updated = am.get_alert(chat_id, alert_id)
         self._api.send_message(
             chat_id,
-            "✅ <b>Alert updated</b>\n"
+            msg.ALERT_UPDATED_HEADER + "\n"
             + formatting.format_alert_card(updated, self._name_by_slug),
             parse_mode="HTML",
         )
@@ -319,11 +294,10 @@ class CommandsMixin:
         # No id → show a tappable picker of the user's alerts.
         alerts = AlertManager(self.db_path).list_alerts(chat_id)
         if not alerts:
-            self._api.send_message(chat_id, "You have no alerts to delete.")
+            self._api.send_message(chat_id, msg.DELALERT_EMPTY)
             return
         self._api.send_message(
-            chat_id,
-            "🗑 Which alert should I delete?",
+            chat_id, msg.DELALERT_PROMPT,
             reply_markup=keyboards.delete_keyboard(alerts),
         )
 
@@ -337,23 +311,23 @@ class CommandsMixin:
 
     def _handle_delalert_direct(self, chat_id: int, alert_id: int):
         if self._delete_alert(chat_id, alert_id):
-            self._api.send_message(chat_id, f"🗑 Deleted alert #{alert_id}.")
+            self._api.send_message(chat_id, msg.ALERT_DELETED.format(id=alert_id))
         else:
-            self._api.send_message(
-                chat_id, f"No alert #{alert_id} found. Use /listalerts."
-            )
+            self._api.send_message(chat_id, msg.ALERT_NOT_FOUND.format(id=alert_id))
 
     def _handle_delete_callback(self, chat_id: int, message_id: int, token: str):
         """Handle a tap on the /delalert picker (callback data after 'del:')."""
         if token == "x":
-            self._api.edit_message(chat_id, message_id, "Okay — nothing deleted.")
+            self._api.edit_message(chat_id, message_id, msg.ALERT_DELETE_CANCELLED)
             return
         if not token.isdigit():
             return
         alert_id = int(token)
         if self._delete_alert(chat_id, alert_id):
-            self._api.edit_message(chat_id, message_id, f"🗑 Deleted alert #{alert_id}.")
+            self._api.edit_message(
+                chat_id, message_id, msg.ALERT_DELETED.format(id=alert_id)
+            )
         else:
             self._api.edit_message(
-                chat_id, message_id, f"Alert #{alert_id} was already gone."
+                chat_id, message_id, msg.ALERT_ALREADY_GONE.format(id=alert_id)
             )
