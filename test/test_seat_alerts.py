@@ -274,5 +274,45 @@ class TestSeatFlow(unittest.TestCase):
         self.assertIn("Wicked", sent[-1])
 
 
+class TestListingParse(unittest.TestCase):
+    """Regression: AMC wraps showtimes in an outer role=group; the wrapper must
+    not masquerade as a showtime and steal the first cell's id (which dropped the
+    11 PM show and duplicated the 7 AM on 7/18)."""
+
+    HTML = """
+    <section aria-label="Showtimes for The Odyssey">
+      <span>IMAX 70MM</span><span>:</span><span>EXTRAORDINARY AWAITS</span>
+      <span>IMAX at AMC</span><span>70mm</span>
+      <div role="group">
+        <ul aria-label="Showtime Group Results">
+          <li><div role="group">
+            <button>7:00 am <span class="sr-only">Sold Out</span></button>
+            <div id="144060333-details"><span>Sold Out</span></div>
+          </div></li>
+          <li><div role="group">
+            <a href="/showtimes/143822250">11:00 pm</a>
+            <div id="143822250-details">Almost Full</div>
+          </div></li>
+        </ul>
+      </div>
+    </section>
+    """
+
+    def test_wrapper_excluded_no_dup_no_collision(self):
+        from amc_showtime_alert.seat_alerts.listings import parse_showings
+        shows = parse_showings(self.HTML)
+        by_time = {s.time: s for s in shows}
+        self.assertEqual(len(shows), 2)                       # no wrapper ghost
+        self.assertEqual(len({s.showtime_id for s in shows}), 2)  # no id collision
+        self.assertEqual(by_time["7:00 AM"].showtime_id, "144060333")
+        self.assertTrue(by_time["7:00 AM"].sold_out)
+        self.assertIn("11:00 PM", by_time)                    # 11 PM not dropped
+        self.assertEqual(by_time["11:00 PM"].showtime_id, "143822250")
+        self.assertFalse(by_time["11:00 PM"].sold_out)
+        # IMAX 70mm block resolves to imax for both
+        self.assertEqual(by_time["7:00 AM"].formats, ["imax"])
+        self.assertEqual(by_time["11:00 PM"].formats, ["imax"])
+
+
 if __name__ == "__main__":
     unittest.main()
