@@ -98,7 +98,7 @@ class TestSeatPoller(unittest.TestCase):
     def tearDown(self):
         Path(self.db).unlink(missing_ok=True)
 
-    def _poll(self, seats):
+    def _poll(self, seats, theater_names=None):
         layout = SeatLayout(rows=10, columns=10, seats=seats)
         return poll_seat_alerts(
             self.db,
@@ -106,6 +106,7 @@ class TestSeatPoller(unittest.TestCase):
             fetch=lambda sid: layout,
             sleep=lambda *_: None,
             delay=0,
+            theater_names=theater_names,
         )
 
     def test_notifies_on_new_good_seat_then_dedups(self):
@@ -139,6 +140,26 @@ class TestSeatPoller(unittest.TestCase):
         stats = self._poll([g])
         self.assertEqual(stats["notified"], 1)
         self.assertIn("G5", self.sent[-1][1])
+
+    def test_message_names_the_theater(self):
+        aid = self.mgr.create(CHAT, "222", TOMORROW, movie_name="Dune",
+                              theater_slug="amc-empire-25",
+                              showtime_label="Fri Jul 18 · 7:00 PM")
+        self._poll([_seat(7, 5, name="G5")],
+                   theater_names={"amc-empire-25": "AMC Empire 25"})
+        texts = [t for _, t in self.sent]
+        self.assertTrue(any("AMC Empire 25" in t for t in texts), texts)
+        # the alert without a theater_slug still notifies, just unnamed
+        self.assertEqual(len(texts), 2)
+
+    def test_message_omits_unknown_theater_slug(self):
+        self.mgr.create(CHAT, "222", TOMORROW, movie_name="Dune",
+                        theater_slug="amc-not-in-config",
+                        showtime_label="Fri Jul 18 · 7:00 PM")
+        self._poll([_seat(7, 5, name="G5")], theater_names={})
+        for _, text in self.sent:
+            self.assertNotIn("amc-not-in-config", text)
+            self.assertIn("G5", text)
 
     def test_fire_sends_photo_when_send_photo_given(self):
         layout = SeatLayout(rows=10, columns=10, seats=[_seat(7, 5, name="G5")])

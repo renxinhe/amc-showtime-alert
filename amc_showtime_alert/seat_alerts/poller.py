@@ -32,15 +32,21 @@ SendFn = Callable[[int, str], bool]
 SendPhotoFn = Callable[[int, bytes, str], bool]
 
 
-def _format_message(alert: SeatAlert, new_seats: List[str], all_good: List[str]) -> str:
+def _format_message(
+    alert: SeatAlert,
+    new_seats: List[str],
+    all_good: List[str],
+    theater_name: str = "",
+) -> str:
     shown = ", ".join(new_seats[:MAX_SEATS_SHOWN])
     if len(new_seats) > MAX_SEATS_SHOWN:
         shown += f" (+{len(new_seats) - MAX_SEATS_SHOWN} more)"
     header = alert.movie_name or "Your watched showing"
     label = alert.showtime_label or alert.showtime_date
+    detail = " · ".join(p for p in (theater_name, label) if p)
     return (
         "🎟 Good seat opened up!\n"
-        f"{header} — {label}\n"
+        f"{header} — {detail}\n"
         f"New good seats: {shown}\n"
         f"({len(all_good)} good seat(s) available now)"
     )
@@ -66,6 +72,7 @@ def poll_seat_alerts(
     send_photo: Optional[SendPhotoFn] = None,
     sleep: Callable[[float], None] = time.sleep,
     delay: float = FETCH_DELAY_SECONDS,
+    theater_names: Optional[Dict[str, str]] = None,
 ) -> Dict[str, int]:
     """
     Check every pollable seat alert once.
@@ -73,8 +80,10 @@ def poll_seat_alerts(
     `send(chat_id, text)` delivers a text notification; when `send_photo` is
     given, fires are delivered as a rendered seat-map image with the text as the
     caption (falling back to text on any render error). `fetch(showtime_id)` is
-    injectable for testing.
+    injectable for testing. `theater_names` maps theater slug → display name, so
+    alerts can name their theater; slugs missing from it are simply omitted.
     """
+    theater_names = theater_names or {}
     fetch = fetch or fetch_seat_layout
     mgr = SeatAlertManager(db_path)
     alerts = mgr.get_pollable()
@@ -92,7 +101,8 @@ def poll_seat_alerts(
         new_seats = [n for n in good_names if n not in previously]
 
         if new_seats:
-            message = _format_message(alert, new_seats, good_names)
+            theater = theater_names.get(alert.theater_slug, "") if alert.theater_slug else ""
+            message = _format_message(alert, new_seats, good_names, theater)
             if _notify(alert, message, new_seats, layout, send, send_photo):
                 stats["notified"] += 1
         mgr.update_last_good_seats(alert.id, good_names)

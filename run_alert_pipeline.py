@@ -511,12 +511,18 @@ class AlertPipeline:
                 return empty
 
             api = TelegramAPI(bot_token)
+            theater_names = {
+                t["slug"]: t["name"]
+                for t in self.config.get("theaters", [])
+                if t.get("slug") and t.get("name")
+            }
             stats = poll_seat_alerts(
                 self.db_path,
                 send=lambda chat_id, text: api.send_message(chat_id, text),
                 send_photo=lambda chat_id, png, caption: api.send_photo(
                     chat_id, png, caption
                 ),
+                theater_names=theater_names,
             )
             self.logger.info(
                 f"🎟 Seat alerts: checked={stats['checked']} "
