@@ -370,14 +370,15 @@ class AlertPipeline:
                 self.logger.error("❌ Missing TELEGRAM_BOT_TOKEN in .env file")
                 return {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
 
-            # Load active subscribers from database
+            # Load Q&A broadcast subscribers from database
             user_mgr = UserManager(self.db_path)
-            chat_ids = [str(cid) for cid in user_mgr.get_active_subscribers()]
+            chat_ids = [str(cid) for cid in user_mgr.get_qna_subscribers()]
 
             if not chat_ids:
                 self.logger.info(
-                    "📱 No active subscribers — skipping notifications. "
-                    "Users can subscribe by sending /start to the bot."
+                    "📱 No Q&A broadcast subscribers — skipping this step "
+                    "(custom and seat alerts are unaffected). Users can "
+                    "subscribe by sending /startqnaalert to the bot."
                 )
                 return {"sent": 0, "failed": 0, "skipped": 0, "updated": 0}
 

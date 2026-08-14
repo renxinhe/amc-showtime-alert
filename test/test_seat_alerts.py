@@ -33,7 +33,7 @@ class TestSeatAlertManager(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self.db = self.tmp.name
-        UserManager(self.db).subscribe(CHAT, first_name="Jim")
+        UserManager(self.db).subscribe_qna(CHAT, first_name="Jim")
         self.mgr = SeatAlertManager(self.db)
 
     def tearDown(self):
@@ -73,7 +73,7 @@ class TestSeatAlertManager(unittest.TestCase):
         remaining = {a.showtime_id for a in self.mgr.list_active(CHAT)}
         self.assertEqual(remaining, {"t", "f"})
 
-    def test_pollable_excludes_inactive_user_and_past_and_deleted(self):
+    def test_pollable_excludes_past_and_deleted(self):
         keep = self.mgr.create(CHAT, "keep", TOMORROW)
         deleted = self.mgr.create(CHAT, "del", TOMORROW)
         self.mgr.soft_delete(CHAT, deleted)
@@ -81,16 +81,26 @@ class TestSeatAlertManager(unittest.TestCase):
         pollable = {a.showtime_id for a in self.mgr.get_pollable()}
         self.assertEqual(pollable, {"keep"})
 
-        # /stop the user -> nothing pollable
-        UserManager(self.db).unsubscribe(CHAT)
-        self.assertEqual(self.mgr.get_pollable(), [])
+    def test_pollable_independent_of_qna_subscription(self):
+        """Seat alerts are their own alert type — /stopqnaalert must not stop them."""
+        self.mgr.create(CHAT, "keep", TOMORROW)
+
+        UserManager(self.db).unsubscribe_qna(CHAT)
+        self.assertEqual({a.showtime_id for a in self.mgr.get_pollable()}, {"keep"})
+
+        # ...and a user with no users row at all still gets polled.
+        other = 424242
+        self.mgr.create(other, "nouserrow", TOMORROW)
+        self.assertEqual(
+            {a.showtime_id for a in self.mgr.get_pollable()}, {"keep", "nouserrow"}
+        )
 
 
 class TestSeatPoller(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self.db = self.tmp.name
-        UserManager(self.db).subscribe(CHAT, first_name="Jim")
+        UserManager(self.db).subscribe_qna(CHAT, first_name="Jim")
         self.mgr = SeatAlertManager(self.db)
         self.aid = self.mgr.create(CHAT, "111", TOMORROW, movie_name="Dune")
         self.sent = []
@@ -202,7 +212,7 @@ class TestSeatFlow(unittest.TestCase):
 
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self.db = self.tmp.name
-        UserManager(self.db).subscribe(CHAT, first_name="Jim")
+        UserManager(self.db).subscribe_qna(CHAT, first_name="Jim")
 
         # Stub the live listing fetch.
         self._orig_fetch = seat_flow.fetch_showings

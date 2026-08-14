@@ -12,7 +12,6 @@ Provided as a mixin consumed by TelegramBot; relies on the host providing
 from ..alert_manager import AlertManager
 from ..alert_matcher import validate_pattern
 from ..movie_format_utils import KNOWN_FORMAT_TOKENS
-from ..user_manager import UserManager
 from . import formatting, keyboards
 from . import messages as msg
 
@@ -147,6 +146,4 @@ class GuidedFlowMixin:
                 msg.ALERTS_CREATED_HEADER.format(n=len(created)) + "\n"
                 + formatting.format_alerts_table(created, self._name_by_slug)
             )
-        if chat_id not in set(UserManager(self.db_path).get_active_subscribers()):
-            body += msg.NOT_SUBSCRIBED_SUFFIX
         self._api.edit_message(chat_id, message_id, body)

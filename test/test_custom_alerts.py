@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Tests for the per-user custom alert feature:
-  - AlertManager CRUD + active-user filtering
+  - AlertManager CRUD + independence from the Q&A subscription
   - alert_matcher.find_alert_matches (theater / keyword / regex / format)
   - UserNotificationState per-user dedup + change detection
   - validate_pattern safety checks
@@ -73,21 +73,22 @@ class TestAlertManager(unittest.TestCase):
         self.assertTrue(self.am.delete_alert(111, aid))
         self.assertEqual(self.am.list_alerts(111), [])
 
-    def test_get_active_alerts_filters_inactive_users(self):
-        self.um.subscribe(111, first_name="A")
-        self.um.subscribe(222, first_name="B")
+    def test_get_active_alerts_independent_of_qna_subscription(self):
+        """Custom alerts are their own alert type — /stopqnaalert must not stop them."""
+        self.um.subscribe_qna(111, first_name="A")
+        self.um.subscribe_qna(222, first_name="B")
         self.am.add_alert(111, "Dune")
         self.am.add_alert(222, "Wicked")
         self.assertEqual(len(self.am.get_active_alerts()), 2)
 
-        self.um.unsubscribe(222)
-        active = self.am.get_active_alerts()
-        self.assertEqual(len(active), 1)
-        self.assertEqual(active[0].chat_id, 111)
+        self.um.unsubscribe_qna(222)
+        self.assertEqual(len(self.am.get_active_alerts()), 2)
 
-        # alert owned by a user not in the users table is excluded
+        # an alert from a user with no users row at all still fires
         self.am.add_alert(333, "Avatar")
-        self.assertEqual(len(self.am.get_active_alerts()), 1)
+        self.assertEqual(
+            {a.chat_id for a in self.am.get_active_alerts()}, {111, 222, 333}
+        )
 
     def test_delete_is_soft(self):
         import sqlite3
@@ -103,7 +104,7 @@ class TestAlertManager(unittest.TestCase):
         self.assertIsNotNone(row[0])                       # row kept, marked deleted
 
     def test_soft_deleted_excluded_from_active(self):
-        self.um.subscribe(111, first_name="A")
+        self.um.subscribe_qna(111, first_name="A")
         a1 = self.am.add_alert(111, "Dune")
         self.am.add_alert(111, "Wicked")
         self.am.delete_alert(111, a1)
@@ -116,7 +117,7 @@ class TestAlertMatcher(unittest.TestCase):
         self.db = self.tmp.name
         self.am = AlertManager(self.db)
         self.um = UserManager(self.db)
-        self.um.subscribe(111, first_name="A")
+        self.um.subscribe_qna(111, first_name="A")
 
     def tearDown(self):
         Path(self.db).unlink(missing_ok=True)
@@ -252,7 +253,7 @@ class TestGuidedAddAlertFlow(unittest.TestCase):
 
         self.tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
         self.db = self.tmp.name
-        UserManager(self.db).subscribe(999, first_name="Jim")
+        UserManager(self.db).subscribe_qna(999, first_name="Jim")
 
         b = TelegramBot.__new__(TelegramBot)
         b.db_path = self.db

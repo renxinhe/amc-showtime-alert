@@ -2,7 +2,15 @@
 """
 User Manager
 Manages Telegram subscriber users in the SQLite database.
-Users subscribe via /start and unsubscribe via /stop with the bot.
+
+The `users` table tracks one thing only: who receives the **global Q&A
+broadcast**. Users opt in via /startqnaalert and out via /stopqnaalert.
+
+The bot's other two alert types are independent of this table — custom alerts
+(`alerts`) and seat alerts (`seat_alerts`) fire off their own rows, so
+unsubscribing from the Q&A broadcast does not silence them. Each type is
+created and deleted on its own: /addalert + /delalert, /addseatalert +
+/delseatalert.
 """
 
 import sqlite3
@@ -44,7 +52,7 @@ class UserManager:
             self.logger.error(f"Database initialization error: {e}")
             raise
 
-    def subscribe(
+    def subscribe_qna(
         self,
         chat_id: int,
         username: Optional[str] = None,
@@ -52,7 +60,7 @@ class UserManager:
         last_name: Optional[str] = None,
     ) -> bool:
         """
-        Subscribe a user to alerts.
+        Subscribe a user to the global Q&A broadcast.
 
         Returns:
             True if newly subscribed or re-subscribed, False if already active.
@@ -118,9 +126,9 @@ class UserManager:
             self.logger.error(f"Database error subscribing user {chat_id}: {e}")
             return False
 
-    def unsubscribe(self, chat_id: int) -> bool:
+    def unsubscribe_qna(self, chat_id: int) -> bool:
         """
-        Unsubscribe a user from alerts.
+        Unsubscribe a user from the global Q&A broadcast.
 
         Returns:
             True if successfully unsubscribed, False if not found or already inactive.
@@ -153,8 +161,8 @@ class UserManager:
             self.logger.error(f"Database error unsubscribing user {chat_id}: {e}")
             return False
 
-    def get_active_subscribers(self) -> List[int]:
-        """Return chat IDs of all active subscribers"""
+    def get_qna_subscribers(self) -> List[int]:
+        """Return chat IDs of everyone subscribed to the global Q&A broadcast"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -165,7 +173,7 @@ class UserManager:
             return []
 
     def get_statistics(self) -> Dict:
-        """Return subscriber statistics"""
+        """Return Q&A broadcast subscriber statistics"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()

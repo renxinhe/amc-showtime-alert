@@ -18,14 +18,22 @@ TELEGRAM_BOT_TOKEN="your_bot_token"
 HEALTHCHECKS_PING_URL="https://hc-ping.com/your-uuid-here"  # optional
 ```
 
-Users subscribe by sending `/start` to the Telegram bot.
+The bot delivers three kinds of alerts.
+
+| Alert type | Opt in | Opt out | Audience |
+|---|---|---|---|
+| **Q&A showings** — screenings billed with a live Q&A (usually with the cast or crew) | `/startqnaalert` | `/stopqnaalert` | one shared feed, all subscribers |
+| **Custom alerts** — any movie/theater/format you choose | `/addalert` | `/delalert` | per-alert, its creator only |
+| **Seat alerts** — one watched showing, notified when a good seat frees up | `/addseatalert` | `/delseatalert` | per-alert, its creator only |
+
+Only the Q&A feed uses the subscription in the `users` table; custom and seat alerts fire off their own rows, so `/stopqnaalert` does not silence them.
 
 ## Bot commands
 
 | Command | Description |
 |---------|-------------|
-| `/start` | Subscribe |
-| `/stop` | Unsubscribe |
+| `/startqnaalert` | Subscribe to special Q&A showings (Q&A feed only) |
+| `/stopqnaalert` | Unsubscribe from special Q&A showings (leaves custom + seat alerts running) |
 | `/addalert <keyword> [theater:<slug>] [format:<imax\|dolby\|70mm\|…>] [regex]` | Create a custom alert |
 | `/listalerts` | List your alerts and their ids |
 | `/editalert <id> [keyword] [theater:…] [format:…] [regex\|noregex]` | Edit an alert |

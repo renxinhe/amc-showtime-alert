@@ -146,11 +146,16 @@ class TelegramBot(CommandsMixin, GuidedFlowMixin, SeatAlertFlowMixin):
                 )
                 return
 
-        if command == "/start":
+        if command == "/startqnaalert":
             self._handle_start(chat_id, from_user)
-        elif command == "/stop":
+        elif command == "/stopqnaalert":
             self._handle_stop(chat_id, from_user)
-        elif command == "/help":
+        # Telegram sends /start on its own when a user first taps Start (and for
+        # t.me deep links), so it can't be an unknown command — show the help
+        # text, which is the menu of what to opt into. Any deep-link payload in
+        # `args` is ignored. Deliberately left out of BOT_COMMANDS: Telegram
+        # surfaces the Start button itself.
+        elif command in ("/help", "/start"):
             self._api.send_message(chat_id, HELP_MESSAGE)
         elif command == "/addalert":
             self._handle_addalert(chat_id, args)

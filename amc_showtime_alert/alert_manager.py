@@ -234,22 +234,18 @@ class AlertManager:
 
     def get_active_alerts(self) -> List[Alert]:
         """
-        Return all alerts whose owner is an active subscriber.
-
-        Alerts belonging to users who have /stop'd (is_active = 0) or who are not
-        in the users table are excluded.
+        Return every alert that has not been soft-deleted.
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
-                    SELECT a.id, a.chat_id, a.theater_slug, a.pattern,
-                           a.is_regex, a.format_filter
-                    FROM alerts a
-                    JOIN users u ON u.chat_id = a.chat_id
-                    WHERE u.is_active = 1 AND a.deleted_at IS NULL
-                    ORDER BY a.chat_id, a.id
+                    SELECT id, chat_id, theater_slug, pattern,
+                           is_regex, format_filter
+                    FROM alerts
+                    WHERE deleted_at IS NULL
+                    ORDER BY chat_id, id
                     """
                 )
                 return [self._row_to_alert(r) for r in cursor.fetchall()]

@@ -45,7 +45,7 @@ class CommandsMixin:
 
     def _handle_start(self, chat_id: int, user: dict):
         um = UserManager(self.db_path)
-        is_new_or_resubscribed = um.subscribe(
+        is_new_or_resubscribed = um.subscribe_qna(
             chat_id=chat_id,
             username=user.get("username"),
             first_name=user.get("first_name"),
@@ -59,7 +59,7 @@ class CommandsMixin:
 
     def _handle_stop(self, chat_id: int, user: dict):
         um = UserManager(self.db_path)
-        was_active = um.unsubscribe(chat_id)
+        was_active = um.unsubscribe_qna(chat_id)
         first_name = user.get("first_name") or "there"
         if was_active:
             self._api.send_message(
@@ -205,9 +205,6 @@ class CommandsMixin:
         text = msg.ALERT_CREATED_HEADER + "\n" + formatting.format_alert_card(
             alert, self._name_by_slug
         )
-        # Remind the user that alerts only fire while subscribed.
-        if chat_id not in set(UserManager(self.db_path).get_active_subscribers()):
-            text += msg.NOT_SUBSCRIBED_SUFFIX
         self._api.send_message(chat_id, text, parse_mode="HTML")
 
     def _handle_listalerts(self, chat_id: int):

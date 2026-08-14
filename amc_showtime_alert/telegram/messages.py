@@ -3,40 +3,46 @@
 
 WELCOME_MESSAGE = (
     "👋 Hi {first_name}! You're now subscribed to AMC Q&A showtime alerts.\n\n"
-    "You'll receive a message whenever new Q&A events are scheduled at AMC "
-    "theaters in NYC.\n\n"
-    "Send /stop to unsubscribe at any time."
+    "These are special Q&A showings — screenings billed with a live Q&A, "
+    "usually with the cast or crew. I watch AMC theaters in NYC and message "
+    "you whenever a new one is scheduled.\n\n"
+    "Send /stopqnaalert to stop the Q&A alerts at any time."
 )
 
 ALREADY_SUBSCRIBED_MESSAGE = (
-    "✅ You're already subscribed to AMC Q&A showtime alerts!\n\n"
-    "Send /stop to unsubscribe."
+    "✅ You're already subscribed to AMC Q&A showtime alerts — special "
+    "screenings with a live Q&A at NYC AMC theaters.\n\n"
+    "Send /stopqnaalert to stop them. Your custom and seat alerts are "
+    "separate and aren't affected either way."
 )
 
 UNSUBSCRIBE_MESSAGE = (
-    "👋 Goodbye {first_name}! You've been unsubscribed from AMC Q&A showtime alerts.\n\n"
-    "Send /start to subscribe again."
+    "👋 Goodbye {first_name}! You've been unsubscribed from AMC Q&A showtime "
+    "alerts, so I won't message you about special Q&A showings anymore.\n\n"
+    "Send /startqnaalert to get Q&A showings again."
 )
 
 NOT_SUBSCRIBED_MESSAGE = (
-    "You're not currently subscribed.\n\n"
-    "Send /start to subscribe to AMC Q&A showtime alerts."
+    "You're not currently subscribed to Q&A showtime alerts.\n\n"
+    "Send /startqnaalert to get alerts about special Q&A showings — "
+    "screenings with a live Q&A at NYC AMC theaters."
 )
 
 HELP_MESSAGE = (
     "🎬 AMC Showtime Alert Bot\n\n"
-    "Subscription:\n"
-    "/start — subscribe (also enables your custom alerts)\n"
-    "/stop — unsubscribe (silences all your alerts)\n\n"
-    "Custom alerts — get notified about any movie you choose:\n"
+    "1️⃣ Q&A showing alerts — special screenings billed with a live Q&A "
+    "at NYC AMC theaters:\n"
+    "/startqnaalert — subscribe to Q&A showings\n"
+    "/stopqnaalert — unsubscribe from Q&A showings\n\n"
+    "2️⃣ Custom alerts — get notified about any movie you choose:\n"
     "/addalert — guided setup: pick theaters & formats with buttons\n"
     "/listalerts — show your alerts and their IDs\n"
     "/editalert <id> [keyword] [theater:…] [format:…] [regex|noregex]\n"
     "/delalert [id] — delete an alert (tap to pick if no id given)\n\n"
-    "Seat alerts — watch one specific showing for a good seat opening up:\n"
+    "3️⃣ Seat alerts — watch one specific showing for a good seat opening up:\n"
     "/addseatalert — pick theater → date → movie → showtime\n"
     "/listseatalerts — show your seat alerts\n"
-    "/delseatalert — delete a seat alert (tap to pick)\n"
+    "/delseatalert — delete a seat alert (tap to pick)\n\n"
     "/cancel — stop the guided setup\n\n"
     "Prefer typing? You can still pass everything inline:\n"
     '  /addalert Oppenheimer format:imax\n'
@@ -47,8 +53,14 @@ HELP_MESSAGE = (
 )
 
 BOT_COMMANDS = [
-    {"command": "start", "description": "Subscribe to alerts"},
-    {"command": "stop", "description": "Unsubscribe from alerts"},
+    {
+        "command": "startqnaalert",
+        "description": "Subscribe to special Q&A showings only",
+    },
+    {
+        "command": "stopqnaalert",
+        "description": "Unsubscribe from special Q&A showings only",
+    },
     {"command": "addalert", "description": "Create a custom showtime alert"},
     {"command": "listalerts", "description": "List your custom alerts"},
     {"command": "editalert", "description": "Edit an existing alert"},
@@ -66,7 +78,6 @@ BOT_COMMANDS = [
 
 CANCELLED_NOTHING = "✖️ Cancelled. Nothing was created."
 NOTHING_TO_CANCEL = "Nothing to cancel."
-NOT_SUBSCRIBED_SUFFIX = "\n\n⚠️ You're not subscribed — send /start to receive alerts."
 
 # Argument-parsing errors (returned, then shown). {value}/{matches}/{slugs}/{tokens}.
 THEATER_AMBIGUOUS = "Ambiguous theater '{value}'. Matches: {matches}"

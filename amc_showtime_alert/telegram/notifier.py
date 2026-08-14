@@ -620,10 +620,10 @@ def main() -> None:
             sys.exit(0)
 
         user_mgr = UserManager(db_path)
-        chat_ids = [str(cid) for cid in user_mgr.get_active_subscribers()]
+        chat_ids = [str(cid) for cid in user_mgr.get_qna_subscribers()]
         if not chat_ids:
-            print("📱 No active subscribers found")
-            print("Users can subscribe by sending /start to the bot")
+            print("📱 No Q&A broadcast subscribers found")
+            print("Users can subscribe by sending /startqnaalert to the bot")
             sys.exit(0)
 
         qa_events = [event for event in events if event.event_type == EventType.QA]

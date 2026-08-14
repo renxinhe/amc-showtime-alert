@@ -152,8 +152,7 @@ class SeatAlertManager:
 
     def get_pollable(self) -> List[SeatAlert]:
         """
-        Active, non-expired alerts whose owner is a subscribed user — the set the
-        poller should check this cycle.
+        Active, non-expired alerts — the set the poller should check this cycle.
         """
         today = datetime.now().strftime("%Y-%m-%d")
         try:
@@ -161,13 +160,11 @@ class SeatAlertManager:
                 cur = conn.cursor()
                 cur.execute(
                     f"""
-                    SELECT {', '.join('sa.'+c for c in self._COLS.split(', '))}
-                    FROM seat_alerts sa
-                    JOIN users u ON u.chat_id = sa.chat_id
-                    WHERE sa.deleted_at IS NULL
-                      AND sa.showtime_date >= ?
-                      AND u.is_active = 1
-                    ORDER BY sa.id
+                    SELECT {self._COLS}
+                    FROM seat_alerts
+                    WHERE deleted_at IS NULL
+                      AND showtime_date >= ?
+                    ORDER BY id
                     """,
                     (today,),
                 )
