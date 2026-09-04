@@ -5,7 +5,6 @@ Scrapes movie showtimes from AMC theatres in NYC using HTML parsing
 with comprehensive error handling, retry logic, and validation.
 """
 
-import requests
 import re
 import json
 import logging
@@ -15,6 +14,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import asdict
 from bs4 import BeautifulSoup, NavigableString
+from curl_cffi import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
@@ -35,6 +35,15 @@ class AMCShowtimeScraper:
     # Known theater names to exclude from movie matches
     THEATER_KEYWORDS = ["AMC", "IMAX", "Dolby", "Prime", "Empire", "Lincoln", "Square"]
 
+    # Browser profile for curl_cffi TLS/HTTP2 impersonation. AMC sits behind
+    # Cloudflare bot scoring that blocks plain python-requests fingerprints
+    # (403 "Sorry, you have been blocked"), so requests must look like a
+    # real browser at the TLS layer, not just in the headers.
+    IMPERSONATE_BROWSER = "chrome"
+
+    # HTTP statuses that will not change on an immediate retry.
+    NON_RETRYABLE_STATUSES = {403, 404}
+
     # Validation constants
     MIN_MOVIES_PER_DAY = 1
     WARN_IF_NO_SHOWTIMES = True
@@ -46,14 +55,10 @@ class AMCShowtimeScraper:
         self._setup_logging()
         self.base_url = "https://www.amctheatres.com"
         self.graph_url = "https://graph.amctheatres.com/v1/graphql"
-        self.headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " "AppleWebKit/537.36"
-            ),
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Referer": "https://www.amctheatres.com/",
-        }
+        # Request headers are supplied by the curl_cffi browser profile
+        # (see IMPERSONATE_BROWSER); custom headers here would contradict
+        # the impersonated TLS fingerprint and raise the bot score.
+        self.headers: Dict[str, str] = {}
         self.stats = {
             "total_requests": 0,
             "successful_requests": 0,
@@ -159,7 +164,12 @@ class AMCShowtimeScraper:
                 )
                 self._update_stats(total_requests=1)
 
-                response = requests.get(url, headers=self.headers, timeout=timeout)
+                response = requests.get(
+                    url,
+                    headers=self.headers,
+                    timeout=timeout,
+                    impersonate=self.IMPERSONATE_BROWSER,
+                )
                 response.raise_for_status()
 
                 self._update_stats(successful_requests=1)
@@ -174,8 +184,14 @@ class AMCShowtimeScraper:
             except requests.exceptions.Timeout:
                 self.logger.warning(f"Timeout fetching {date} (attempt {attempt + 1})")
             except requests.exceptions.HTTPError as e:
-                self.logger.error(f"HTTP error for {date}: {e.response.status_code}")
-                if e.response.status_code == 429:  # Rate limited
+                status = e.response.status_code if e.response is not None else None
+                self.logger.error(f"HTTP error for {date}: {status}")
+                if status in self.NON_RETRYABLE_STATUSES:
+                    # Retrying a block/not-found only adds load against a host
+                    # that scores us on request volume.
+                    self.logger.warning(f"Not retrying {date} after HTTP {status}")
+                    break
+                if status == 429:  # Rate limited
                     self.logger.warning("Rate limited, waiting longer...")
                     time.sleep(retry_delays[-1] * 2)
             except requests.exceptions.RequestException as e:
