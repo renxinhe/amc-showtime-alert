@@ -7,6 +7,7 @@ Tests the NotificationState manager and end-to-end deduplication logic
 import sys
 import unittest
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -14,6 +15,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from amc_showtime_alert.schema import EventData, EventType
 from amc_showtime_alert.notification_state import NotificationState
 from amc_showtime_alert.telegram import TelegramNotifier
+
+
+def _upcoming(days_ahead: int) -> str:
+    """YYYY-MM-DD for a date `days_ahead` days from now (keeps fixtures future)."""
+    return (datetime.now() + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
 
 
 class TestDeduplicationLogic(unittest.TestCase):
@@ -27,7 +33,7 @@ class TestDeduplicationLogic(unittest.TestCase):
         self.test_event = EventData(
             movie_name='Test Movie Live Q&A with Cast',
             theater='AMC Lincoln Square 13',
-            date='2025-11-06',
+            date=_upcoming(7),
             slug='test-movie-live-q-a-with-cast',
             event_type=EventType.QA,
             showtimes=['7:00 PM', '9:30 PM'],
@@ -97,11 +103,13 @@ class MockTelegramNotifier(TelegramNotifier):
         self.messages_sent = []
         self.bot_token = "test_token"
         self.chat_ids = "test_chat"
+        self.retention_days = 30
 
     def _test_bot_connection(self):
         return True
 
-    def send_message(self, message, chat_id):
+    def _send_message(self, message, chat_id, *args, **kwargs):
+        # Intercept the real Telegram call the notifier makes.
         self.messages_sent.append((message, chat_id))
         return True
 
@@ -117,7 +125,7 @@ class TestEndToEndDeduplication(unittest.TestCase):
             EventData(
                 movie_name='Die My Love Live Q&A',
                 theater='AMC Lincoln Square 13',
-                date='2025-11-06',
+                date=_upcoming(7),
                 slug='die-my-love-live-q-a',
                 event_type=EventType.QA,
                 showtimes=['7:00 PM'],
@@ -127,7 +135,7 @@ class TestEndToEndDeduplication(unittest.TestCase):
             EventData(
                 movie_name='Another Movie Q&A',
                 theater='AMC Empire 25',
-                date='2025-11-07',
+                date=_upcoming(8),
                 slug='another-movie-q-a',
                 event_type=EventType.QA,
                 showtimes=['8:00 PM', '10:00 PM'],

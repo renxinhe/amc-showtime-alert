@@ -8,6 +8,7 @@ import sys
 import unittest
 import logging
 from dataclasses import replace
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -31,7 +32,7 @@ class TestNotificationState(unittest.TestCase):
         self.test_event = EventData(
             movie_name='Test Movie Q&A',
             theater='AMC Lincoln Square 13',
-            date='2025-11-06',
+            date=(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"),
             slug='test-movie-q-a',
             event_type=EventType.QA,
             showtimes=['7:00 PM', '9:30 PM'],

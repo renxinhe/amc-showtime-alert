@@ -27,9 +27,9 @@ from dataclasses import dataclass
 from typing import List, Optional
 
 try:
-    import requests
+    from curl_cffi import requests
 except ImportError:
-    raise ImportError("requests library is required: pip install requests")
+    raise ImportError("curl_cffi library is required: pip install curl_cffi")
 
 logger = logging.getLogger("SeatMap")
 
@@ -38,11 +38,12 @@ AMC_BASE_URL = "https://www.amctheatres.com"
 # Component payload directly instead of redirecting to the virtual queue. Only
 # its PRESENCE matters — the value is not a build hash and is not validated.
 RSC_TOKEN = "1"
+# AMC sits behind Cloudflare bot scoring that blocks the TLS fingerprint of
+# plain python-requests, so every fetch goes through curl_cffi impersonating a
+# real browser. The browser profile supplies User-Agent and the other standard
+# headers; only request-specific headers are added on top.
+IMPERSONATE_BROWSER = "chrome"
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
-    ),
     # With the RSC header we get the compact component payload (~350 KB) rather
     # than the full HTML document (~2.8 MB); both contain the seat map.
     "RSC": "1",
@@ -100,7 +101,9 @@ def fetch_seat_layout(showtime_id: str, timeout: int = 30) -> Optional[SeatLayou
     """Fetch and parse the seat layout for a showtime id, or None on failure."""
     url = f"{AMC_BASE_URL}/showtimes/{showtime_id}/seats?_rsc={RSC_TOKEN}"
     try:
-        response = requests.get(url, headers=HEADERS, timeout=timeout)
+        response = requests.get(
+            url, headers=HEADERS, timeout=timeout, impersonate=IMPERSONATE_BROWSER
+        )
     except requests.exceptions.RequestException as e:
         logger.warning(f"Seat fetch for {showtime_id} failed: {e}")
         return None
@@ -146,9 +149,7 @@ def fetch_showtime_meta(showtime_id: str, timeout: int = 30) -> Optional[dict]:
     try:
         # No RSC header → the full rendered document, which carries readable
         # schedule info. The _rsc param still bypasses the virtual queue.
-        resp = requests.get(
-            url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=timeout
-        )
+        resp = requests.get(url, timeout=timeout, impersonate=IMPERSONATE_BROWSER)
         if not resp.ok:
             return None
         text = resp.text

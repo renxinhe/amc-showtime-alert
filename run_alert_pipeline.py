@@ -622,20 +622,19 @@ class AlertPipeline:
                 self._ping_healthchecks("/fail")
                 return False
 
-            # Count successful theaters and movies
+            # Count successful theaters and movies. The scrape file is
+            # {"scraped_at", "stats", "results": [one entry per theater-day]}.
             try:
                 with open(scraped_file, "r", encoding="utf-8") as f:
                     scraped_data = json.load(f)
-                    if isinstance(scraped_data, list):
-                        metrics["theaters_success"] = sum(
-                            1 for t in scraped_data if t.get("success", False)
-                        )
-                        for theater in scraped_data:
-                            if theater.get("success") and "data" in theater:
-                                for date_data in theater["data"]:
-                                    metrics["movies"] += len(
-                                        date_data.get("movies", [])
-                                    )
+                results = scraped_data.get("results", [])
+                successful_theaters = set()
+                for day in results:
+                    if not day.get("success"):
+                        continue
+                    successful_theaters.add(day.get("theater"))
+                    metrics["movies"] += len(day.get("movies", []))
+                metrics["theaters_success"] = len(successful_theaters)
             except Exception:
                 pass
 

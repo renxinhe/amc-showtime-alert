@@ -13,27 +13,20 @@ from dataclasses import dataclass, field
 from typing import List
 
 try:
-    import requests
+    from curl_cffi import requests
     from bs4 import BeautifulSoup, NavigableString, Tag
 except ImportError as e:
-    raise ImportError("requests and beautifulsoup4 are required") from e
+    raise ImportError("curl_cffi and beautifulsoup4 are required") from e
 
 from ..movie_format_utils import detect_format_label, resolve_block_formats
-from .seat_map import AMC_BASE_URL, RSC_TOKEN
+from .seat_map import AMC_BASE_URL, IMPERSONATE_BROWSER, RSC_TOKEN
 
 logger = logging.getLogger("SeatAlertListings")
 
 # The listing page is parsed as HTML (<section aria-label="Showtimes for ...">),
 # so — unlike the seats endpoint — we do NOT send the RSC header (which would
 # return a component payload). The _rsc query param still bypasses the queue.
-LISTING_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
-    ),
-    "Accept": "application/json",
-    "Referer": f"{AMC_BASE_URL}/",
-}
+# Standard browser headers come from the curl_cffi impersonation profile.
 
 _THEATER_KEYWORDS = ("AMC", "Theatre", "Theater")
 _TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*(am|pm)", re.IGNORECASE)
@@ -59,7 +52,7 @@ def fetch_showings(market: str, slug: str, date: str) -> List[Showing]:
         f"?date={date}&_rsc={RSC_TOKEN}"
     )
     try:
-        resp = requests.get(url, headers=LISTING_HEADERS, timeout=30)
+        resp = requests.get(url, timeout=30, impersonate=IMPERSONATE_BROWSER)
         if not resp.ok:
             logger.warning(f"Listing fetch {slug} {date} -> {resp.status_code}")
             return []
