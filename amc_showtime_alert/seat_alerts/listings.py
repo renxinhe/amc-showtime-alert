@@ -18,6 +18,7 @@ try:
 except ImportError as e:
     raise ImportError("curl_cffi and beautifulsoup4 are required") from e
 
+from ..html_utils import restore_streamed_segments
 from ..movie_format_utils import detect_format_label, resolve_block_formats
 from .seat_map import AMC_BASE_URL, IMPERSONATE_BROWSER, RSC_TOKEN
 
@@ -66,6 +67,7 @@ def parse_showings(html: str) -> List[Showing]:
     """Parse showings (with ids, formats, sold-out) from a listing page's HTML."""
     showings: List[Showing] = []
     soup = BeautifulSoup(html, "html.parser")
+    restore_streamed_segments(soup)
     sections = soup.find_all("section", attrs={"aria-label": re.compile(r"Showtimes for")})
     for section in sections:
         label = section.get("aria-label", "")

@@ -18,6 +18,7 @@ from curl_cffi import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
+from .html_utils import restore_streamed_segments
 from .schema import DailyShowtimes, Movie, Showtime
 from .movie_format_utils import detect_format_label, resolve_block_formats
 
@@ -240,6 +241,7 @@ class AMCShowtimeScraper:
 
         try:
             soup = BeautifulSoup(html_data, "html.parser")
+            restore_streamed_segments(soup)
 
             # Find all movie sections with aria-label="Showtimes for ..."
             movie_sections = soup.find_all(

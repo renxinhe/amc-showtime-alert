@@ -345,5 +345,81 @@ class TestListingParse(unittest.TestCase):
         self.assertEqual(by_time["11:00 PM"].formats, ["imax"])
 
 
+class TestStreamedListingParse(unittest.TestCase):
+    # Matches AMC's Nov 9/12 Godzilla page: the evening cells arrive outside
+    # the movie section and browser-side $RS calls insert them at P:* markers.
+    HTML = """
+    <section aria-label="Showtimes for Godzilla Minus Zero">
+      <span>IMAX with Laser at AMC</span><span>:</span><span>EXTRAORDINARY AWAITS</span>
+      <div role="group"><ul>
+        <li><div role="group"><a href="/showtimes/147459588">10:00 am</a></div></li>
+        <template id="P:51"></template><template id="P:52"></template>
+      </ul></div>
+      <span>Dolby Cinema</span><span>:</span>
+      <div role="group"><a href="/showtimes/900">9:00 pm</a></div>
+    </section>
+    <section aria-label="Showtimes for Another Movie">
+      <span>Regular 70mm</span><span>:</span><template id="P:53"></template>
+    </section>
+    <div hidden id="S:53"><div role="group"><a href="/showtimes/901">7:45 pm</a></div></div>
+    <div hidden id="S:52"><li><div role="group">
+      <button>11:00 pm <span>Sold Out</span></button>
+      <div id="147459591-details">Sold Out</div>
+    </div></li></div>
+    <div hidden id="S:51"><li><div role="group">
+      <a href="/showtimes/147459587"><time>7:45<!-- -->pm</time><span>Almost Full</span></a>
+    </div></li></div>
+    <script>$RS("S:53","P:53");$RS("S:52","P:52");$RS("S:51","P:51")</script>
+    """
+
+    def test_delayed_cells_keep_movie_format_order_and_sold_out(self):
+        from amc_showtime_alert.seat_alerts.listings import parse_showings
+        shows = parse_showings(self.HTML)
+        self.assertEqual(
+            [(s.movie, s.time, s.showtime_id, s.formats, s.sold_out) for s in shows],
+            [("Godzilla Minus Zero", "10:00 AM", "147459588", ["imax"], False),
+             ("Godzilla Minus Zero", "7:45 PM", "147459587", ["imax"], False),
+             ("Godzilla Minus Zero", "11:00 PM", "147459591", ["imax"], True),
+             ("Godzilla Minus Zero", "9:00 PM", "900", ["dolby"], False),
+             ("Another Movie", "7:45 PM", "901", ["70mm"], False)],
+        )
+
+    def test_general_scraper_also_recovers_evening_show(self):
+        import logging
+        from amc_showtime_alert.amc_scraper import AMCShowtimeScraper
+        scraper = AMCShowtimeScraper.__new__(AMCShowtimeScraper)
+        scraper.logger = logging.getLogger("test")
+        movies = scraper._parse_movies(self.HTML)
+        movie = next(m for m in movies if m[0] == "Godzilla Minus Zero")
+        self.assertIn("7:45 PM", movie[4])
+        detail = next(s for s in movie[5] if s.time == "7:45 PM")
+        self.assertEqual(detail.formats, ["imax"])
+
+    def test_incomplete_or_unreferenced_segments_are_not_assigned(self):
+        from amc_showtime_alert.seat_alerts.listings import parse_showings
+        html = self.HTML.replace('$RS("S:51","P:51")', '$RS("S:missing","P:51")')
+        shows = parse_showings(html)
+        self.assertNotIn("147459587", [s.showtime_id for s in shows])
+        self.assertIn("147459591", [s.showtime_id for s in shows])
+
+    def test_nested_segments_and_repeated_restore_are_safe(self):
+        from bs4 import BeautifulSoup
+        from amc_showtime_alert.html_utils import restore_streamed_segments
+        from amc_showtime_alert.seat_alerts.listings import parse_showings
+        html = """
+        <section aria-label="Showtimes for Godzilla Minus Zero">
+          <span>IMAX</span><span>:</span><template id="P:1"></template>
+        </section>
+        <div hidden id="S:2"><div role="group"><a href="/showtimes/123">7:45 pm</a></div></div>
+        <div hidden id="S:1"><ul><li><template id="P:2"></template></li></ul></div>
+        <script>$RS("S:2","P:2");$RS("S:1","P:1")</script>
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        restore_streamed_segments(soup)
+        restore_streamed_segments(soup)
+        shows = parse_showings(str(soup))
+        self.assertEqual([(s.showtime_id, s.formats) for s in shows], [("123", ["imax"])])
+
+
 if __name__ == "__main__":
     unittest.main()
